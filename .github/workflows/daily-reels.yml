@@ -1,23 +1,22 @@
 name: Daily Quran Reels
 
 on:
-  # Scheduled runs: 3 times per day (6 AM, 2 PM, 10 PM Cairo time = UTC+2)
   schedule:
-    - cron: '0 4 * * *'   # 6:00 AM Cairo (04:00 UTC)
-    - cron: '0 12 * * *'  # 2:00 PM Cairo (12:00 UTC)
-    - cron: '0 20 * * *'  # 10:00 PM Cairo (20:00 UTC)
+    - cron: '0 4 * * *'
+    - cron: '0 12 * * *'
+    - cron: '0 20 * * *'
 
-  # Allow manual trigger from GitHub UI
   workflow_dispatch:
     inputs:
       count:
         description: 'Number of videos to generate'
         required: false
         default: '1'
+        type: string
       test_mode:
         description: 'Upload as private (test mode)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
@@ -26,7 +25,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # --- Setup ---
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -46,22 +44,18 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # --- Restore persistent state ---
       - name: Restore YouTube credentials
         run: |
           echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
           echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
 
-      - name: Restore database from artifact
-        uses: dawidd6/action-download-artifact@v6
+      - name: Restore database from previous run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           name: quran-reels-db
           path: database/
-          if_no_artifact_found: warn
-          search_artifacts: true
-          workflow: daily-reels.yml
 
-      # --- Ensure font is available ---
       - name: Ensure Amiri font exists
         run: |
           mkdir -p assets/fonts/amiri
@@ -71,7 +65,6 @@ jobs:
             unzip -jo /tmp/amiri.zip "*/Amiri-Bold.ttf" -d assets/fonts/amiri/ || true
           fi
 
-      # --- Generate & Upload ---
       - name: Generate and upload reel
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
@@ -95,7 +88,6 @@ jobs:
             python main.py auto $TEST_FLAG
           fi
 
-      # --- Persist state ---
       - name: Save database for next run
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,19 +97,8 @@ jobs:
           overwrite: true
           retention-days: 90
 
-      - name: Update YouTube token if refreshed
+      - name: Cleanup secrets from runner
         if: always()
         run: |
-          if [ -f token.json ]; then
-            echo "TOKEN_UPDATED=true" >> $GITHUB_ENV
-            echo "::notice::YouTube token may have been refreshed. Check if secrets need updating."
-          fi
-
-      # --- Cleanup ---
-      - name: Cleanup generated files
-        if: always()
-        run: |
-          rm -f client_secrets.json
-          rm -rf outputs/videos/*
-          rm -rf outputs/audio/*
-          rm -rf assets/downloaded_bg/*
+          rm -f client_secrets.json token.json
+          rm -rf outputs/videos/* outputs/audio/* assets/downloaded_bg/*
