@@ -7,7 +7,7 @@ python-dotenv>=1.0.0
 
 # Audio Processing
 pydub>=0.25.0
-audioop-lts>=0.2.0  # Required for Python 3.13+
+audioop-lts>=0.2.0; python_version>="3.13"  # Required for Python 3.13+
 
 # Video Processing
 moviepy==1.0.3
