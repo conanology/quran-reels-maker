@@ -1,0 +1,123 @@
+name: Daily Quran Reels
+
+on:
+  # Scheduled runs: 3 times per day (6 AM, 2 PM, 10 PM Cairo time = UTC+2)
+  schedule:
+    - cron: '0 4 * * *'   # 6:00 AM Cairo (04:00 UTC)
+    - cron: '0 12 * * *'  # 2:00 PM Cairo (12:00 UTC)
+    - cron: '0 20 * * *'  # 10:00 PM Cairo (20:00 UTC)
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'Number of videos to generate'
+        required: false
+        default: '1'
+      test_mode:
+        description: 'Upload as private (test mode)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # --- Setup ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --- Restore persistent state ---
+      - name: Restore YouTube credentials
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
+          echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
+
+      - name: Restore database from artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: quran-reels-db
+          path: database/
+          if_no_artifact_found: warn
+          search_artifacts: true
+          workflow: daily-reels.yml
+
+      # --- Ensure font is available ---
+      - name: Ensure Amiri font exists
+        run: |
+          mkdir -p assets/fonts/amiri
+          if [ ! -f assets/fonts/amiri/Amiri-Bold.ttf ]; then
+            echo "Downloading Amiri font..."
+            curl -sL "https://github.com/aliftype/amiri/releases/download/1.000/Amiri-1.000.zip" -o /tmp/amiri.zip
+            unzip -jo /tmp/amiri.zip "*/Amiri-Bold.ttf" -d assets/fonts/amiri/ || true
+          fi
+
+      # --- Generate & Upload ---
+      - name: Generate and upload reel
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          FRIDAY_MODE_ENABLED: 'true'
+          APPROVAL_REQUIRED: 'false'
+          ENABLE_KEN_BURNS: 'true'
+          ENABLE_INTRO_FRAME: 'false'
+          IMAGEMAGICK_BINARY: /usr/bin/convert
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          COUNT="${{ github.event.inputs.count || '1' }}"
+          TEST_FLAG=""
+          if [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
+            TEST_FLAG="--test"
+          fi
+
+          if [ "$COUNT" -gt 1 ]; then
+            python main.py batch --count "$COUNT" $TEST_FLAG
+          else
+            python main.py auto $TEST_FLAG
+          fi
+
+      # --- Persist state ---
+      - name: Save database for next run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quran-reels-db
+          path: database/quran_reels.db
+          overwrite: true
+          retention-days: 90
+
+      - name: Update YouTube token if refreshed
+        if: always()
+        run: |
+          if [ -f token.json ]; then
+            echo "TOKEN_UPDATED=true" >> $GITHUB_ENV
+            echo "::notice::YouTube token may have been refreshed. Check if secrets need updating."
+          fi
+
+      # --- Cleanup ---
+      - name: Cleanup generated files
+        if: always()
+        run: |
+          rm -f client_secrets.json
+          rm -rf outputs/videos/*
+          rm -rf outputs/audio/*
+          rm -rf assets/downloaded_bg/*

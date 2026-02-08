@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Environment & credentials (NEVER commit these)
+.env
+.env.local
+.env.*.local
+token.json
+token.pickle
+token.pickle.bak
+client_secrets.json
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+.cache/
+nul
+
+# Claude Code
+.claude/
+
+# Debug/test artifacts
+test_*.png
+debug_*.py
+check_words.py
+investigate_api.py
+surah_112_data.json
+
+# Generated outputs (large video/audio files)
+outputs/videos/*.mp4
+outputs/audio/*.mp3
+assets/downloaded_bg/*.mp4
+
+# Database (persisted via GitHub Actions artifacts)
+database/quran_reels.db
