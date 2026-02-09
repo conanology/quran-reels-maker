@@ -19,6 +19,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   generate-and-upload:
     runs-on: ubuntu-latest
@@ -48,13 +51,6 @@ jobs:
         run: |
           echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
           echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
-
-      - name: Restore database from previous run
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: quran-reels-db
-          path: database/
 
       - name: Ensure Amiri font exists
         run: |
@@ -88,17 +84,13 @@ jobs:
             python main.py auto $TEST_FLAG
           fi
 
-      - name: Save database for next run
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: quran-reels-db
-          path: database/quran_reels.db
-          overwrite: true
-          retention-days: 90
-
-      - name: Cleanup secrets from runner
+      - name: Commit database progress
         if: always()
         run: |
           rm -f client_secrets.json token.json
           rm -rf outputs/videos/* outputs/audio/* assets/downloaded_bg/*
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add database/quran_reels.db
+          git diff --cached --quiet || git commit -m "Update Quran progress database [skip ci]"
+          git push

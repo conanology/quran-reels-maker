@@ -55,6 +55,3 @@ surah_112_data.json
 outputs/videos/*.mp4
 outputs/audio/*.mp3
 assets/downloaded_bg/*.mp4
-
-# Database (persisted via GitHub Actions artifacts)
-database/quran_reels.db
