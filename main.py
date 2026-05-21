@@ -622,6 +622,226 @@ def cmd_set_position(args):
         print(f"\n❌ Error: {e}\n")
 
 
+def cmd_longform(args):
+    """Handler for the 'longform' CLI command."""
+    if args.lf_command is None:
+        print("Usage: python main.py longform [list|status|compile|auto]")
+        return
+        
+    if args.lf_command == 'list':
+        from longform.scheduler import create_compilation_groups_from_scratch, get_already_compiled
+        groups = create_compilation_groups_from_scratch()
+        already_done = get_already_compiled()
+        
+        print("\n" + "="*70)
+        print("📊 QURAN LONGFORM COMPILATIONS QUEUE")
+        print("="*70)
+        
+        for idx, group in enumerate(groups, 1):
+            key = (
+                group["surah_start"],
+                group["surah_end"],
+                group.get("ayah_start"),
+                group.get("ayah_end")
+            )
+            status_icon = "✅" if key in already_done else "⏳"
+            ayah_str = ""
+            if group["ayah_start"] is not None:
+                ayah_str = f" (Ayahs {group['ayah_start']}-{group['ayah_end']})"
+            
+            print(f"   {idx:3d}. {status_icon} {group['title']}")
+            print(f"        Surahs: {group['surah_start']} to {group['surah_end']}{ayah_str} | Est: {group['estimated_duration']/60:.1f} mins")
+            
+        print("="*70 + "\n")
+        
+    elif args.lf_command == 'status':
+        from longform.scheduler import get_compilation_history
+        history = get_compilation_history(15)
+        
+        print("\n" + "="*70)
+        print("📜 QURAN LONGFORM COMPILATION HISTORY")
+        print("="*70)
+        
+        if not history:
+            print("\nNo longform compilations generated yet.")
+        else:
+            for h in history:
+                status_icon = "✅" if h['status'] == 'uploaded' else "⏳"
+                created = h['created_at'][:10] if h['created_at'] else "Unknown"
+                ayah_str = ""
+                if h['ayah_start'] is not None:
+                    ayah_str = f" ({h['ayah_start']}-{h['ayah_end']})"
+                
+                print(f"\n{status_icon} {h['title']}")
+                print(f"   Surahs: {h['surah_start']}-{h['surah_end']}{ayah_str} | Duration: {h['duration_formatted']}")
+                print(f"   Created: {created} | Status: {h['status']}")
+                if h['youtube_url']:
+                    print(f"   YouTube: {h['youtube_url']}")
+                elif h['video_path']:
+                    print(f"   Video: {h['video_path']}")
+        print("="*70 + "\n")
+        
+    elif args.lf_command == 'compile':
+        from longform.compiler import generate_longform
+        from longform.visual_randomizer import generate_compilation_style
+        from config.settings import DEFAULT_RECITER, VERSE_COUNTS
+        
+        reciter = args.reciter or DEFAULT_RECITER
+        surah = args.surah
+        surah_end = args.surah_end or surah
+        start_ayah = args.start
+        end_ayah = args.end
+        loop_count = args.loop or 1
+        
+        # Validate surah_end
+        if surah_end < surah:
+            print(f"❌ Error: --surah-end ({surah_end}) cannot be less than --surah ({surah})")
+            return
+            
+        # Determine how many unique ayahs we are rendering
+        total_ayahs = 0
+        for s in range(surah, surah_end + 1):
+            if s == surah and start_ayah is not None:
+                sa = start_ayah
+            else:
+                sa = 1
+            if s == surah_end and end_ayah is not None:
+                ea = end_ayah
+            else:
+                ea = VERSE_COUNTS[s]
+            total_ayahs += ea - sa + 1
+            
+        # Generate styles for each segment
+        styles = generate_compilation_style(total_ayahs)
+        
+        if surah == surah_end:
+            range_str = f"Surah {surah} (Ayahs {start_ayah or 1} to {end_ayah or VERSE_COUNTS[surah]})"
+        else:
+            range_str = f"Surahs {surah} to {surah_end}"
+            
+        print(f"\n🚀 Compiling {range_str} with reciter: {reciter} (loop count: {loop_count})")
+        
+        try:
+            metadata = generate_longform(
+                surah_start=surah,
+                surah_end=surah_end,
+                reciter_key=reciter,
+                compilation_styles=styles,
+                ayah_start=start_ayah,
+                ayah_end=end_ayah,
+                loop_count=loop_count
+            )
+            print("\n✅ Compilation successful!")
+            print(f"   Output: {metadata['output_path']}")
+            print(f"   Duration: {metadata['duration_formatted']}")
+        except Exception as e:
+            logger.error(f"Manual compilation failed: {e}")
+            print(f"\n❌ Error: {e}")
+            
+    elif args.lf_command == 'auto':
+        from longform.scheduler import get_next_compilation, record_compilation, update_compilation_youtube
+        from longform.compiler import generate_longform
+        from longform.visual_randomizer import generate_compilation_style
+        from youtube.uploader import upload_video
+        from youtube.auth import check_authentication_status
+        from config.settings import DEFAULT_RECITER, RECITERS, VERSE_COUNTS
+        import os
+        import random
+        
+        # Check authentication first
+        auth_status = check_authentication_status()
+        if auth_status['status'] != 'valid':
+            print(f"❌ YouTube authentication is not valid: {auth_status['message']}")
+            print("Please run 'python main.py setup-youtube' first.")
+            return
+            
+        # 1. Get next compilation
+        group = get_next_compilation()
+        if not group:
+            print("\n🎉 All longform videos have been compiled!")
+            return
+            
+        reciter = args.reciter
+        if not reciter:
+            # Pick a random reciter from the available list to make it diverse
+            reciter = random.choice(list(RECITERS.keys()))
+            logger.info(f"Randomly selected reciter for long-form: {reciter}")
+            
+        # Determine total ayahs to compile in this group
+        total_ayahs = 0
+        for s in range(group["surah_start"], group["surah_end"] + 1):
+            if s == group["surah_start"] and group["ayah_start"] is not None:
+                sa = group["ayah_start"]
+            else:
+                sa = 1
+            if s == group["surah_end"] and group["ayah_end"] is not None:
+                ea = group["ayah_end"]
+            else:
+                ea = VERSE_COUNTS[s]
+            total_ayahs += ea - sa + 1
+            
+        styles = generate_compilation_style(total_ayahs)
+        
+        # 2. Render
+        print(f"\n🚀 Rendering: {group['title']}")
+        print(f"   Reciter: {reciter}")
+        print(f"   Est. Duration: {group['estimated_duration']/60:.1f} mins\n")
+        
+        try:
+            metadata = generate_longform(
+                surah_start=group["surah_start"],
+                surah_end=group["surah_end"],
+                reciter_key=reciter,
+                compilation_styles=styles,
+                ayah_start=group["ayah_start"],
+                ayah_end=group["ayah_end"]
+            )
+            
+            bg_id = None
+            
+            # 3. Record in DB
+            history_id = record_compilation(
+                title=metadata["recommended_title"],
+                surah_start=group["surah_start"],
+                surah_end=group["surah_end"],
+                num_clips=total_ayahs,
+                source_clip_ids=[],
+                duration_seconds=metadata["duration_seconds"],
+                video_path=metadata["output_path"],
+                background_video_id=bg_id,
+                ayah_start=group["ayah_start"],
+                ayah_end=group["ayah_end"]
+            )
+            
+            # 4. Upload to YouTube as Unlisted
+            privacy = 'private' if args.test else 'unlisted'
+            
+            youtube_meta = {
+                'title': metadata["recommended_title"],
+                'description': metadata["description"],
+                'tags': metadata["tags"]
+            }
+            
+            print(f"\n📤 Uploading to YouTube as {privacy.upper()}...")
+            video_path = Path(metadata["output_path"])
+            
+            upload_result = upload_video(
+                video_path,
+                youtube_meta,
+                privacy_status=privacy
+            )
+            
+            # 5. Update DB record with YouTube ID
+            update_compilation_youtube(history_id, upload_result['video_id'])
+            
+            print(f"\n🎉 Successfully completed!")
+            print(f"   YouTube URL: {upload_result['url']}")
+            
+        except Exception as e:
+            logger.error(f"Auto long-form flow failed: {e}")
+            print(f"\n❌ Flow failed: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Quran Reels Maker - Automated Quran Short Videos",
@@ -635,6 +855,8 @@ Examples:
   python main.py auto --test                 # Generate and upload as private
   python main.py status                      # Show progress
   python main.py setup-youtube               # Set up YouTube auth
+  python main.py longform list               # Show upcoming longform queue
+  python main.py longform auto               # Compile next longform and upload
         """
     )
     
@@ -703,6 +925,30 @@ Examples:
     setpos_parser = subparsers.add_parser('set-position', help='Set current Quran position')
     setpos_parser.add_argument('surah', type=int, help='Surah number (1-114)')
     setpos_parser.add_argument('ayah', type=int, help='Ayah number')
+
+    # Longform commands subparser
+    lf_parser = subparsers.add_parser('longform', help='Long-form video compilation commands')
+    lf_subparsers = lf_parser.add_subparsers(dest='lf_command', help='Longform subcommands')
+    
+    # Longform list
+    lf_subparsers.add_parser('list', help='List all upcoming compilation groups')
+    
+    # Longform status
+    lf_subparsers.add_parser('status', help='Show compilation history')
+    
+    # Longform compile
+    compile_parser = lf_subparsers.add_parser('compile', help='Compile a specific surah range')
+    compile_parser.add_argument('--surah', type=int, required=True, help='Surah number to compile')
+    compile_parser.add_argument('--surah-end', type=int, help='Ending surah number (optional, for range)')
+    compile_parser.add_argument('--start', type=int, help='Starting ayah (for split surahs)')
+    compile_parser.add_argument('--end', type=int, help='Ending ayah (for split surahs)')
+    compile_parser.add_argument('--reciter', type=str, help='Reciter key (defaults to default)')
+    compile_parser.add_argument('--loop', type=int, default=1, help='Number of times to loop/repeat the sequence')
+    
+    # Longform auto
+    auto_lf_parser = lf_subparsers.add_parser('auto', help='Automatically compile next group and upload')
+    auto_lf_parser.add_argument('--reciter', type=str, help='Reciter key')
+    auto_lf_parser.add_argument('--test', action='store_true', help='Upload as private/test')
     
     args = parser.parse_args()
     
@@ -720,7 +966,8 @@ Examples:
         'setup-youtube': cmd_setup_youtube,
         'history': cmd_history,
         'set-position': cmd_set_position,
-        'tiktok': cmd_tiktok
+        'tiktok': cmd_tiktok,
+        'longform': cmd_longform
     }
     
     if args.command in commands:

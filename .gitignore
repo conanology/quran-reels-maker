@@ -55,3 +55,7 @@ surah_112_data.json
 outputs/videos/*.mp4
 outputs/audio/*.mp3
 assets/downloaded_bg/*.mp4
+outputs/longform/downloads/
+outputs/longform/backgrounds/
+outputs/longform/output/
+outputs/longform/temp/

@@ -1,0 +1,101 @@
+name: Scheduled Quran Long-Form Compilation
+
+on:
+  schedule:
+    # Run every Sunday, Wednesday, and Friday at 02:00 UTC (4:00 AM Cairo Time)
+    - cron: '0 2 * * 0,3,5'
+
+  workflow_dispatch:
+    inputs:
+      reciter:
+        description: 'Reciter key (e.g., alafasy, shuraym, sudais, husary) - optional'
+        required: false
+        type: string
+      test_mode:
+        description: 'Upload as private (test mode)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  compile-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # Long-form video compilation can take a while
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore YouTube credentials
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
+          echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
+
+      - name: Ensure Amiri font exists
+        run: |
+          mkdir -p assets/fonts/amiri
+          if [ ! -f assets/fonts/amiri/Amiri-Bold.ttf ]; then
+            echo "Downloading Amiri font..."
+            curl -sL "https://github.com/aliftype/amiri/releases/download/1.000/Amiri-1.000.zip" -o /tmp/amiri.zip
+            unzip -jo /tmp/amiri.zip "*/Amiri-Bold.ttf" -d assets/fonts/amiri/ || true
+          fi
+
+      - name: Generate and upload long-form compilation
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          VIDEO_ENCODER: libx264  # Force CPU encoding on GitHub Actions runner
+          APPROVAL_REQUIRED: 'false'
+          IMAGEMAGICK_BINARY: /usr/bin/convert
+        run: |
+          TEST_FLAG=""
+          if [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
+            TEST_FLAG="--test"
+          fi
+          
+          RECITER_FLAG=""
+          if [ -n "${{ github.event.inputs.reciter }}" ]; then
+            RECITER_FLAG="--reciter ${{ github.event.inputs.reciter }}"
+          fi
+
+          python main.py longform auto $TEST_FLAG $RECITER_FLAG
+
+      - name: Commit compilation progress
+        if: always()
+        run: |
+          rm -f client_secrets.json token.json token.pickle
+          # Clean up large temporary/output video and audio files to prevent committing them to Git
+          rm -rf outputs/longform/downloads/*
+          rm -rf outputs/longform/backgrounds/*
+          rm -rf outputs/longform/output/*
+          rm -rf outputs/longform/temp/*
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Stage the database progress and background usage JSON tracking
+          git add database/quran_reels.db
+          if [ -f outputs/longform/background_usage.json ]; then
+            git add outputs/longform/background_usage.json
+          fi
+          
+          git diff --cached --quiet || git commit -m "Update Quran long-form progress and backgrounds database [skip ci]"
+          git push

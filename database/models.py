@@ -103,6 +103,34 @@ class ReelHistory(Base):
         return f"{self.start_ayah}-{self.end_ayah}"
 
 
+class LongformHistory(Base):
+    """
+    Records all compiled long-form videos with their details and upload status.
+    """
+    __tablename__ = "longform_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(Text, nullable=False)  # e.g. "Surah Al-Baqarah | Complete Recitation"
+    surah_start = Column(Integer, nullable=False)  # First surah in compilation
+    surah_end = Column(Integer, nullable=False)    # Last surah in compilation
+    ayah_start = Column(Integer, nullable=True)    # Starting ayah (if partial)
+    ayah_end = Column(Integer, nullable=True)      # Ending ayah (if partial)
+    num_clips = Column(Integer, default=0)         # Number of source shorts
+    source_clip_ids = Column(Text, nullable=True)  # JSON list of YouTube video IDs
+    duration_seconds = Column(Integer, default=0)
+    video_path = Column(Text, nullable=True)
+    background_video_id = Column(String(50), nullable=True)  # Pexels video ID used
+    youtube_id = Column(String(50), nullable=True)
+    youtube_url = Column(Text, nullable=True)
+    status = Column(String(20), default="compiled")  # compiled, uploaded, failed
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    uploaded_at = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<LongformHistory(surahs={self.surah_start}-{self.surah_end}, status={self.status})>"
+
+
 class AppSettings(Base):
     """
     Stores persistent application settings.

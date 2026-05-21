@@ -3,6 +3,7 @@ Quran Reels Maker - Configuration Settings
 All application settings in one place
 """
 import os
+import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -39,7 +40,7 @@ for directory in [FONTS_DIR, BACKGROUNDS_DIR, VIDEOS_DIR, AUDIO_DIR, DATABASE_DI
     directory.mkdir(parents=True, exist_ok=True)
 
 # =============================================================================
-# VIDEO SETTINGS
+# VIDEO SETTINGS (Shorts - 9:16)
 # =============================================================================
 
 VIDEO_WIDTH = 1080
@@ -48,6 +49,66 @@ VIDEO_FPS = 24
 VIDEO_CODEC = "libx264"
 AUDIO_CODEC = "aac"
 AUDIO_BITRATE = "192k"
+
+# =============================================================================
+# VIDEO ENCODER AUTO-DETECTION (NVENC / libx264)
+# =============================================================================
+
+def _detect_encoder() -> str:
+    """Auto-detect h264_nvenc GPU encoder, fall back to libx264."""
+    # Allow explicit override via environment variable
+    override = os.getenv("VIDEO_ENCODER")
+    if override:
+        return override
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=5
+        )
+        if "h264_nvenc" in result.stdout:
+            return "h264_nvenc"
+    except Exception:
+        pass
+    return "libx264"
+
+DETECTED_ENCODER = _detect_encoder()
+
+# NVENC-specific encoding params (RTX 2080 Ti optimized)
+NVENC_PARAMS = [
+    "-preset", "p7",
+    "-rc", "vbr",
+    "-cq", "20",
+    "-spatial-aq", "1",
+    "-rc-lookahead", "32",
+] if DETECTED_ENCODER == "h264_nvenc" else []
+
+# =============================================================================
+# LONG-FORM VIDEO SETTINGS (16:9)
+# =============================================================================
+
+LONGFORM_WIDTH = 1920
+LONGFORM_HEIGHT = 1080
+LONGFORM_FPS = 30
+LONGFORM_TRANSITION_MIN = 2.5   # Min fade duration (seconds)
+LONGFORM_TRANSITION_MAX = 4.5   # Max fade duration (seconds)
+LONGFORM_TRANSITION_DEFAULT = 3.0
+LONGFORM_MIN_DURATION = 8 * 60    # 8 minutes minimum
+LONGFORM_MAX_DURATION = 60 * 60   # 60 minutes maximum
+LONGFORM_SHORT_SURAH_THRESHOLD = 5 * 60  # Surahs shorter than 5 min get grouped
+
+# YouTube channel for fetching Shorts
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/channel/UCyB2ELxFEfJAVi18vLjBWDA"
+
+# Long-form output directories
+LONGFORM_DIR = OUTPUTS_DIR / "longform"
+LONGFORM_DOWNLOADS_DIR = LONGFORM_DIR / "downloads"
+LONGFORM_BACKGROUNDS_DIR = LONGFORM_DIR / "backgrounds"
+LONGFORM_OUTPUT_DIR = LONGFORM_DIR / "output"
+LONGFORM_TEMP_DIR = LONGFORM_DIR / "temp"
+
+for _d in [LONGFORM_DIR, LONGFORM_DOWNLOADS_DIR, LONGFORM_BACKGROUNDS_DIR,
+           LONGFORM_OUTPUT_DIR, LONGFORM_TEMP_DIR]:
+    _d.mkdir(parents=True, exist_ok=True)
 
 # Text overlay settings
 FONT_PATH = str(FONTS_DIR / "amiri" / "Amiri-Bold.ttf")
