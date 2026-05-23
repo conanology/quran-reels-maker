@@ -414,3 +414,43 @@ def check_video_status(video_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to check video status: {e}")
         return {'found': False, 'id': video_id, 'error': str(e)}
+
+
+def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Upload a custom thumbnail for a YouTube video.
+    
+    Args:
+        video_id: The ID of the uploaded YouTube video
+        thumbnail_path: Path to the JPG thumbnail file
+        
+    Returns:
+        API response dictionary if successful, None otherwise
+    """
+    thumbnail_path = Path(thumbnail_path)
+    if not thumbnail_path.exists():
+        logger.error(f"Thumbnail file not found: {thumbnail_path}")
+        return None
+        
+    try:
+        service = get_authenticated_service()
+        logger.info(f"Uploading custom thumbnail for video {video_id} from {thumbnail_path.name}...")
+        
+        media = MediaFileUpload(
+            str(thumbnail_path),
+            mimetype='image/jpeg'
+        )
+        
+        request = service.thumbnails().set(
+            videoId=video_id,
+            media_body=media
+        )
+        
+        response = request.execute()
+        logger.success(f"✅ Successfully uploaded custom thumbnail for video {video_id}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Failed to upload custom thumbnail for video {video_id}: {e}")
+        return None
+

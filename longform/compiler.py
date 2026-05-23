@@ -437,16 +437,18 @@ def _render_ayah_segment(
 def generate_longform(
     surah_start: int,
     surah_end: int,
-    reciter_key: str = DEFAULT_RECITER,
+    reciter_key: str,
     background_path: Optional[str] = None,
     output_filename: Optional[str] = None,
-    compilation_styles: Optional[List[Dict]] = None,
-    ayah_padding: float = 0.6,
-    transition_duration: float = LONGFORM_TRANSITION_DEFAULT,
-    progress_callback: Optional[Callable] = None,
+    compilation_styles: Optional[List[str]] = None,
+    ayah_padding: float = 0.5,
+    transition_duration: float = 1.0,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ayah_start: Optional[int] = None,
     ayah_end: Optional[int] = None,
     loop_count: int = 1,
+    thumbnail_template: Optional[str] = None,
+    custom_bg_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate a complete long-form 16:9 Quran video from scratch.
@@ -467,6 +469,9 @@ def generate_longform(
         progress_callback: fn(current_ayah, total_ayahs, message)
         ayah_start: Optional starting ayah (1-based, only for single-surah compilation)
         ayah_end: Optional ending ayah (inclusive, only for single-surah compilation)
+        loop_count: Number of times to loop compilation content
+        thumbnail_template: Override template style for custom thumbnail
+        custom_bg_prompt: Custom landscape text-to-image background prompt
 
     Returns:
         Dict with output_path, duration, chapters, description, title, etc.
@@ -510,7 +515,7 @@ def generate_longform(
         try:
             from longform.background_renderer import get_ai_landscape_background, get_cinematic_background
             logger.info("Attempting to generate dynamic AI landscape background...")
-            bg_res = get_ai_landscape_background(surah_start, ayah_start or 1)
+            bg_res = get_ai_landscape_background(surah_start, ayah_start or 1, custom_prompt=custom_bg_prompt)
             if bg_res:
                 bg_video, bg_image = bg_res
                 background_path = str(bg_video)
@@ -822,7 +827,8 @@ def generate_longform(
                 reciter_name_en=reciter_name_en,
                 bg_image_path=thumbnail_bg_image_path,
                 output_path=thumbnail_path,
-                custom_title_en=None
+                custom_title_en=None,
+                template_name=thumbnail_template
             )
             thumbnail_generated = True
         except Exception as e:

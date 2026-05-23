@@ -184,6 +184,7 @@ def record_compilation(
     background_video_id: Optional[str] = None,
     ayah_start: Optional[int] = None,
     ayah_end: Optional[int] = None,
+    reciter_key: Optional[str] = None,
 ) -> int:
     """Record a completed compilation in the database."""
     session = get_db_session()
@@ -199,6 +200,7 @@ def record_compilation(
             duration_seconds=duration_seconds,
             video_path=video_path,
             background_video_id=background_video_id,
+            reciter_key=reciter_key,
             status="compiled",
         )
         session.add(record)

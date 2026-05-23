@@ -41,19 +41,20 @@ def generate_longform_thumbnail(
     reciter_name_en: str,
     bg_image_path: Path,
     output_path: Path,
-    custom_title_en: Optional[str] = None
+    custom_title_en: Optional[str] = None,
+    template_name: Optional[str] = None
 ) -> Path:
     """
     Generate a professional, high-CTR YouTube thumbnail (1280x720).
     
     Layout:
-    - Elegant gold frame inset.
+    - Elegant gold/silver frame inset.
     - Large centered gold Arabic Surah name.
     - Large white English Surah name.
     - Subtitle "FULL RECITATION" or custom theme.
     - Reciter name at the bottom in gold/white.
     """
-    logger.info(f"Generating longform thumbnail from background: {bg_image_path.name}")
+    logger.info(f"Generating longform thumbnail (template: {template_name}) from background: {bg_image_path.name}")
     
     # 1. Load background image and resize/crop to exactly 1280x720 (16:9)
     try:
@@ -68,15 +69,32 @@ def generate_longform_thumbnail(
     overlay = Image.new("RGBA", bg.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # Draw semi-transparent dark overlay (tint)
-    draw.rectangle([(0, 0), bg.size], fill=(0, 0, 0, 115))  # ~45% black tint
+    # Determine template-specific styles
+    overlay_fill = (0, 0, 0, 115)  # Default: ~45% black tint
+    frame_color = (212, 175, 55, 220)  # Default: Premium gold
+    subtitle_display = "BEAUTIFUL & HEART SOOTHING RECITATION"
+
+    if template_name == "Kaaba Night":
+        overlay_fill = (15, 20, 45, 125)  # Indigo tint
+        frame_color = (220, 220, 230, 200)  # Silver frame
+        subtitle_display = "BEAUTIFUL QURAN RECITATION FOR SLEEP"
+    elif template_name == "Open Quran":
+        overlay_fill = (35, 22, 10, 125)  # Warm brown tint
+        subtitle_display = "HEART SOOTHING FULL RECITATION"
+    elif template_name == "Mosque Gold":
+        overlay_fill = (10, 10, 5, 120)  # Dark gold-tinted black
+        subtitle_display = "BEAUTIFUL & PEACEFUL RECITATION"
+    elif template_name == "Reciter Showcase":
+        subtitle_display = "PEACEFUL QURAN COMPILATION"
+
+    # Draw semi-transparent overlay (tint)
+    draw.rectangle([(0, 0), bg.size], fill=overlay_fill)
     
-    # Draw elegant gold frame inset by 25px
+    # Draw elegant frame inset by 25px
     inset = 25
-    gold_color = (212, 175, 55, 220)  # Premium gold
     draw.rectangle(
         [(inset, inset), (1280 - inset, 720 - inset)],
-        outline=gold_color,
+        outline=frame_color,
         width=3
     )
 
@@ -136,7 +154,6 @@ def generate_longform_thumbnail(
 
     # 6. Prepare Reciter Name & Subtitle
     reciter_display = f"Recited by {reciter_name_en}"
-    subtitle_display = "BEAUTIFUL & HEART SOOTHING RECITATION"
 
     # 7. Render Text Layers (all centered horizontally)
     # Optimized visual spacing:

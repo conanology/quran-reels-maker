@@ -236,14 +236,18 @@ def get_cinematic_background(min_duration: int = 30) -> Optional[Path]:
     return None
 
 
-def get_ai_landscape_background(surah: int, start_ayah: int) -> Optional[Path]:
+def get_ai_landscape_background(
+    surah: int, 
+    start_ayah: int, 
+    custom_prompt: Optional[str] = None
+) -> Optional[tuple]:
     """
-    Generate a landscape AI themed background video based on the translation of the first ayah.
-    1. Fetch translation.
-    2. Generate visual prompt.
+    Generate a landscape AI themed background video based on the translation of the first ayah or custom_prompt.
+    1. Fetch translation if custom_prompt is not provided.
+    2. Generate visual prompt or use custom_prompt.
     3. Download landscape (1920x1080) image from Pollinations.ai.
     4. Convert image to 60-second zoom-in MP4 video.
-    5. Return video Path.
+    5. Return tuple of (video Path, image Path).
     """
     import subprocess
     import time
@@ -251,22 +255,26 @@ def get_ai_landscape_background(surah: int, start_ayah: int) -> Optional[Path]:
     from core.quran_api import get_ayah_translation
     from core.ai_brain import generate_visual_prompt
 
-    # 1. Fetch translation
-    try:
-        translation = get_ayah_translation(surah, start_ayah)
-    except Exception as e:
-        logger.warning(f"Could not get translation for AI background: {e}")
-        return None
+    # 1. Determine visual prompt
+    if custom_prompt:
+        visual_prompt = custom_prompt
+    else:
+        # Fetch translation
+        try:
+            translation = get_ayah_translation(surah, start_ayah)
+        except Exception as e:
+            logger.warning(f"Could not get translation for AI background: {e}")
+            return None
 
-    if not translation:
-        logger.warning(f"No translation found for {surah}:{start_ayah}")
-        return None
+        if not translation:
+            logger.warning(f"No translation found for {surah}:{start_ayah}")
+            return None
 
-    # 2. Generate visual prompt
-    visual_prompt = generate_visual_prompt(translation)
-    if not visual_prompt:
-        logger.warning("Could not generate visual prompt from AI brain.")
-        return None
+        # Generate visual prompt
+        visual_prompt = generate_visual_prompt(translation)
+        if not visual_prompt:
+            logger.warning("Could not generate visual prompt from AI brain.")
+            return None
 
     # 3. Download landscape image
     encoded_prompt = urllib.parse.quote(visual_prompt)

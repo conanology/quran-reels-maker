@@ -831,7 +831,16 @@ def cmd_longform(args):
                 privacy_status=privacy
             )
             
-            # 5. Update DB record with YouTube ID
+            # 5. Upload custom thumbnail if generated
+            thumbnail_path_str = metadata.get("thumbnail_path")
+            if thumbnail_path_str:
+                try:
+                    from youtube.uploader import upload_thumbnail
+                    upload_thumbnail(upload_result['video_id'], Path(thumbnail_path_str))
+                except Exception as e:
+                    logger.error(f"Failed to upload custom thumbnail: {e}")
+            
+            # 6. Update DB record with YouTube ID
             update_compilation_youtube(history_id, upload_result['video_id'])
             
             print(f"\n🎉 Successfully completed!")
@@ -840,6 +849,73 @@ def cmd_longform(args):
         except Exception as e:
             logger.error(f"Auto long-form flow failed: {e}")
             print(f"\n❌ Flow failed: {e}")
+
+
+def cmd_growth_engine(args):
+    """Handler for the 'growth-engine' CLI command."""
+    import json
+    if args.ge_command is None:
+        print("Usage: python main.py growth-engine [run|list]")
+        return
+        
+    if args.ge_command == 'run':
+        from core.growth_engine import execute_scheduled_slot
+        slot = args.slot
+        dry_run = args.dry_run
+        
+        print("\n" + "="*70)
+        print(f"🚀 RUNNING DAILYQURAN GROWTH ENGINE SLOT")
+        if slot:
+            print(f"   Forced Slot: {slot}")
+        if dry_run:
+            print("   Mode: DRY RUN (No files created, no uploads)")
+        print("="*70 + "\n")
+        
+        result = execute_scheduled_slot(slot_name=slot, dry_run=dry_run)
+        
+        print("\n" + "="*70)
+        print("📊 EXECUTION RESULT:")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print("="*70 + "\n")
+        
+    elif args.ge_command == 'list':
+        from core.growth_engine import get_mecca_time, get_slot_format
+        import datetime
+        
+        now = get_mecca_time()
+        print("\n" + "="*70)
+        print("📅 UPCOMING GROWTH ENGINE PUBLISHING CALENDAR (MECCA TIME / UTC+3)")
+        print("="*70)
+        print(f"Current Mecca Time: {now.strftime('%Y-%m-%d %I:%M %p (%A)')}\n")
+        
+        # Print slots for the next 7 days
+        current = now.replace(minute=0, second=0, microsecond=0)
+        printed = 0
+        for offset_hours in range(24 * 7):
+            future_time = current + datetime.timedelta(hours=offset_hours)
+            
+            # Simple slot checks matching get_current_slot logic
+            weekday = future_time.weekday()
+            hour = future_time.hour
+            slot_name = None
+            
+            if weekday == 4 and 20 <= hour <= 23:
+                if hour == 21:
+                    slot_name = "friday_long"
+            elif weekday == 5 and 21 <= hour <= 23:
+                if hour == 22:
+                    slot_name = "saturday_sleep"
+            elif hour == 5:
+                slot_name = "morning_short"
+            elif hour == 20:
+                slot_name = "evening_short"
+                
+            if slot_name:
+                fmt = get_slot_format(slot_name)
+                print(f"   - {future_time.strftime('%Y-%m-%d %I:%M %p (%a)')} | Slot: {slot_name:<15} | Format: {fmt}")
+                printed += 1
+                
+        print("="*70 + "\n")
 
 
 def main():
@@ -950,6 +1026,18 @@ Examples:
     auto_lf_parser.add_argument('--reciter', type=str, help='Reciter key')
     auto_lf_parser.add_argument('--test', action='store_true', help='Upload as private/test')
     
+    # Growth Engine commands subparser
+    ge_parser = subparsers.add_parser('growth-engine', help='DailyQuran Growth Engine automation')
+    ge_subparsers = ge_parser.add_subparsers(dest='ge_command', help='Growth Engine subcommands')
+    
+    # Growth Engine run
+    run_parser = ge_subparsers.add_parser('run', help='Execute a scheduled growth engine slot')
+    run_parser.add_argument('--slot', type=str, choices=['morning_short', 'evening_short', 'friday_long', 'saturday_sleep'], help='Force a specific slot')
+    run_parser.add_argument('--dry-run', action='store_true', help='Execute all selection and scoring rules without actual rendering or uploading')
+    
+    # Growth Engine list
+    ge_subparsers.add_parser('list', help='List the upcoming growth engine slot schedule')
+    
     args = parser.parse_args()
     
     if args.command is None:
@@ -967,7 +1055,8 @@ Examples:
         'history': cmd_history,
         'set-position': cmd_set_position,
         'tiktok': cmd_tiktok,
-        'longform': cmd_longform
+        'longform': cmd_longform,
+        'growth-engine': cmd_growth_engine
     }
     
     if args.command in commands:

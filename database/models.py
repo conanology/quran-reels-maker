@@ -166,6 +166,7 @@ class LongformHistory(Base):
     duration_seconds = Column(Integer, default=0)
     video_path = Column(Text, nullable=True)
     background_video_id = Column(String(50), nullable=True)  # Pexels video ID used
+    reciter_key = Column(String(50), nullable=True)          # Reciter key used
     youtube_id = Column(String(50), nullable=True)
     youtube_url = Column(Text, nullable=True)
     status = Column(String(20), default="compiled")  # compiled, uploaded, failed
