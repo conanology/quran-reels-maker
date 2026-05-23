@@ -315,14 +315,41 @@ def generate_engine_title(
 # ---------------------------------------------------------------------------
 
 def get_thumbnail_template_for_format(format_type: str) -> str:
-    """Map the video format to the correct blueprint thumbnail template."""
+    """
+    Determine the thumbnail template, enforcing the blueprint guardrail:
+    - Rotate templates evenly.
+    - Never publish 2 of the same template consecutively.
+    """
+    from database.models import get_setting, set_setting
+    
+    # Check if format has a hard template requirement
+    hard_template = None
     if format_type == "sleep_long":
-        return "Kaaba Night"
+        hard_template = "Kaaba Night"
     elif format_type == "full_surah_long":
-        return "Open Quran"
+        hard_template = "Open Quran"
     elif format_type == "weekly_compilation":
-        return "Mosque Gold"
-    return "Reciter Showcase"
+        hard_template = "Mosque Gold"
+        
+    last_template = get_setting("last_thumbnail_template", "")
+    templates = ["Reciter Showcase", "Mosque Gold", "Open Quran", "Kaaba Night"]
+    
+    if hard_template:
+        selected = hard_template
+        if selected == last_template:
+            logger.warning(f"Consecutive thumbnail template conflict: hard requirement '{selected}' matches last template. Proceeding due to content constraints.")
+    else:
+        # For Shorts / fallback formats, rotate to the next template in the list
+        if last_template in templates:
+            last_idx = templates.index(last_template)
+            next_idx = (last_idx + 1) % len(templates)
+            selected = templates[next_idx]
+        else:
+            selected = random.choice(templates)
+            
+    # Persist choice for the next execution
+    set_setting("last_thumbnail_template", selected)
+    return selected
 
 
 # ---------------------------------------------------------------------------

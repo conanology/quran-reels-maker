@@ -123,12 +123,33 @@ def test_vidiq_scoring_and_titles():
     logger.success("vidIQ SEO Title generator tests passed.")
 
 def test_thumbnail_templates():
-    logger.info("Testing Thumbnail template mapping...")
+    logger.info("Testing Thumbnail template mapping and rotation guardrails...")
+    
+    # 1. Hard requirements check
     assert get_thumbnail_template_for_format("sleep_long") == "Kaaba Night"
     assert get_thumbnail_template_for_format("full_surah_long") == "Open Quran"
     assert get_thumbnail_template_for_format("weekly_compilation") == "Mosque Gold"
-    assert get_thumbnail_template_for_format("standard_short") == "Reciter Showcase"
-    logger.success("Thumbnail template mapping tests passed.")
+    
+    # Reset last template setting
+    set_setting("last_thumbnail_template", "")
+    
+    # 2. Sequential rotation and consecutive duplicate guardrail checks
+    history = []
+    for _ in range(8):
+        tmpl = get_thumbnail_template_for_format("standard_short")
+        history.append(tmpl)
+        
+    logger.info(f"Thumbnail rotation sequence: {history}")
+    
+    # Ensure no consecutive repeats
+    for i in range(len(history) - 1):
+        assert history[i] != history[i+1], f"Consecutive thumbnail template repeat detected at index {i}: {history[i]} == {history[i+1]}"
+        
+    # Ensure all templates are rotated/represented
+    unique_templates = set(history)
+    assert len(unique_templates) > 2, f"Expected template rotation variety, got unique templates: {unique_templates}"
+    
+    logger.success("Thumbnail template mapping and rotation guardrail tests passed.")
 
 def test_feedback_loop_performance_analytics():
     logger.info("Testing Performance Feedback Loop & Analytics rules...")
