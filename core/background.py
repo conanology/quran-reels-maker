@@ -109,11 +109,14 @@ def load_and_grade_background(
     Returns:
         Graded CompositeVideoClip ready for compositing
     """
-    bg_clip = VideoFileClip(str(path))
-
-    # Loop to cover full duration
-    bg_clip = bg_clip.fx(vfx.loop, duration=total_duration)
-    bg_clip = bg_clip.subclip(0, total_duration)
+    if path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+        from moviepy.editor import ImageClip
+        bg_clip = ImageClip(str(path)).set_duration(total_duration)
+    else:
+        bg_clip = VideoFileClip(str(path))
+        # Loop to cover full duration
+        bg_clip = bg_clip.fx(vfx.loop, duration=total_duration)
+        bg_clip = bg_clip.subclip(0, total_duration)
 
     # Aspect ratio fitting
     target_aspect = style.video_width / style.video_height

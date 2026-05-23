@@ -68,6 +68,43 @@ from core.text_renderer import (
 )
 
 
+def download_ai_background(translation: str) -> Optional[Path]:
+    """Generate and download a themed AI background image from Pollinations.ai."""
+    import time
+    import requests
+    import urllib.parse
+    from core.ai_brain import generate_visual_prompt
+    
+    # 1. Generate prompt from translation
+    visual_prompt = generate_visual_prompt(translation)
+    if not visual_prompt:
+        logger.warning("Could not generate visual prompt from AI brain. Falling back.")
+        return None
+        
+    # 2. Format URL
+    encoded_prompt = urllib.parse.quote(visual_prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&model=flux&nologo=true"
+    
+    from config.settings import ASSETS_DIR
+    download_dir = ASSETS_DIR / "downloaded_bg"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    output_path = download_dir / f"ai_bg_{int(time.time())}.jpg"
+    
+    logger.info(f"Downloading themed AI background from Pollinations: {output_path.name}")
+    try:
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+            return output_path
+        else:
+            logger.error(f"Pollinations API error: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to download AI background: {e}")
+        return None
+
+
 class VideoGeneratorError(Exception):
     """Custom exception for video generation errors"""
     pass
@@ -202,14 +239,26 @@ def generate_reel(
     logger.info(f"Total video duration: {total_duration:.1f}s")
 
     # === STEP 3: Background ===
-    from core.stock_footage import get_dynamic_background
-    background_path = get_dynamic_background()
-
+    full_translation = " ".join(item.get("translation", "") for item in ayah_data).strip()
+    background_path = None
+    
+    if full_translation:
+        try:
+            background_path = download_ai_background(full_translation)
+        except Exception as e:
+            logger.error(f"Error during AI background generation: {e}")
+            
     if background_path:
-        logger.info(f"Using dynamic background from Pexels: {background_path.name}")
+        logger.info(f"Using custom AI-generated background: {background_path.name}")
     else:
-        background_path = pick_random_background()
-        logger.info(f"Using local background: {background_path.name}")
+        # Fallback to Pexels dynamic video
+        from core.stock_footage import get_dynamic_background
+        background_path = get_dynamic_background()
+        if background_path:
+            logger.info(f"Using dynamic background from Pexels: {background_path.name}")
+        else:
+            background_path = pick_random_background()
+            logger.info(f"Using local background: {background_path.name}")
 
     bg_with_grading = load_and_grade_background(
         background_path, total_duration, style, enable_ken_burns=ENABLE_KEN_BURNS,

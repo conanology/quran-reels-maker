@@ -63,6 +63,59 @@ def generate_metadata(
     reciter_name_ar = reciter_info.get("name_ar", reciter_key)
     reciter_name_en = reciter_info.get("name_en", reciter_key)
     
+    # === AI Brain Metadata Generation ===
+    from core.quran_api import get_ayah_translation
+    from core.ai_brain import generate_video_metadata
+    
+    translations = []
+    for a in range(start_ayah, end_ayah + 1):
+        t = get_ayah_translation(surah, a)
+        if t:
+            translations.append(t)
+    translation_text = " ".join(translations).strip()
+    
+    ai_metadata = None
+    if translation_text:
+        try:
+            ai_metadata = generate_video_metadata(
+                surah_name=surah_name_en,
+                start_ayah=start_ayah,
+                end_ayah=end_ayah,
+                reciter_name=reciter_name_en,
+                translation=translation_text
+            )
+        except Exception as e:
+            logger.error(f"Error during AI metadata generation: {e}")
+            
+    if ai_metadata and ai_metadata.get("title") and ai_metadata.get("description"):
+        title = ai_metadata["title"]
+        description = ai_metadata["description"]
+        tags = ai_metadata.get("tags", [])
+        
+        # Ensure title limit is respected (YouTube limit is 100 chars)
+        if len(title) > 100:
+            title = title[:97] + "..."
+            
+        # Add fallback template tags if missing to ensure discoverability
+        for req_tag in [surah_name_ar, f"سورة {surah_name_ar}", surah_name_en, f"Surah {surah_name_en}", reciter_name_ar, reciter_name_en]:
+            if req_tag.lower() not in [t.lower() for t in tags]:
+                tags.append(req_tag)
+                
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_tags = []
+        for tag in tags:
+            if tag.lower() not in seen:
+                seen.add(tag.lower())
+                unique_tags.append(tag)
+                
+        return {
+            "title": title,
+            "description": description,
+            "tags": unique_tags[:500]
+        }
+    
+    # === FALLBACK TO ORIGINAL TEMPLATES ===
     # Format verse range
     if start_ayah == end_ayah:
         verse_range = str(start_ayah)
