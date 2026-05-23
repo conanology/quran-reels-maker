@@ -146,13 +146,24 @@ def _generate_text_overlay(
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # 2. Reshaper helper
+    # 2. Reshaper helper and native RTL detection
+    from PIL import features
+    has_raqm = features.check("raqm")
+    
+    # Define text rendering kwargs for Arabic text
+    text_kwargs = {}
+    if has_raqm:
+        text_kwargs["direction"] = "rtl"
+        text_kwargs["language"] = "ar"
+
     reshaper = arabic_reshaper.ArabicReshaper(configuration={
         'delete_harakat': False,
         'delete_tatweel': False,
     })
 
     def prepare_line(line: str) -> str:
+        if has_raqm:
+            return line
         reshaped = reshaper.reshape(line)
         return get_display(reshaped)
 
@@ -170,7 +181,7 @@ def _generate_text_overlay(
             test_line_words = current_line_words + [word]
             test_line = " ".join(test_line_words)
             disp = prepare_line(test_line)
-            bbox = draw.textbbox((0, 0), disp, font=font, stroke_width=3)
+            bbox = draw.textbbox((0, 0), disp, font=font, stroke_width=3, **text_kwargs)
             w = bbox[2] - bbox[0]
             if w <= max_w or not current_line_words:
                 current_line_words = test_line_words
@@ -199,7 +210,7 @@ def _generate_text_overlay(
         line_sizes = []
         for line in wrapped_lines:
             disp = prepare_line(line)
-            bbox = draw.textbbox((0, 0), disp, font=font_ayah, stroke_width=3)
+            bbox = draw.textbbox((0, 0), disp, font=font_ayah, stroke_width=3, **text_kwargs)
             line_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1]))
             
         total_text_h = sum(h for w, h in line_sizes) + int(font_size * 0.25) * (len(wrapped_lines) - 1)
@@ -232,13 +243,14 @@ def _generate_text_overlay(
             fill=(255, 255, 255, 255),
             stroke_width=3,
             stroke_fill=(0, 0, 0, 178),
+            **text_kwargs,
         )
         y_cursor += line_h + int(font_size * 0.25)
 
     # 7. Render Surah name at top-center
     font_surah = _load_font(FONT_PATH, 36)
     surah_text = prepare_line(_clean_arabic(f"سورة {surah_name_ar}"))
-    bbox_surah = draw.textbbox((0, 0), surah_text, font=font_surah, stroke_width=2)
+    bbox_surah = draw.textbbox((0, 0), surah_text, font=font_surah, stroke_width=2, **text_kwargs)
     sw = bbox_surah[2] - bbox_surah[0]
     draw.text(
         ((width - sw) // 2, 40),
@@ -247,13 +259,14 @@ def _generate_text_overlay(
         fill=(255, 255, 255, 230),
         stroke_width=2,
         stroke_fill=(0, 0, 0, 128),
+        **text_kwargs,
     )
 
     # 8. Render Ayah number at top-right
     font_num = _load_font(FONT_PATH, 44)
     ayah_num_str = f"﴿ {to_arabic_digits(ayah_num)} ﴾"
     num_text = prepare_line(ayah_num_str)
-    bbox_num = draw.textbbox((0, 0), num_text, font=font_num, stroke_width=2)
+    bbox_num = draw.textbbox((0, 0), num_text, font=font_num, stroke_width=2, **text_kwargs)
     nw = bbox_num[2] - bbox_num[0]
     draw.text(
         (width - nw - 60, 60),
@@ -262,12 +275,13 @@ def _generate_text_overlay(
         fill=(212, 175, 55, 255),  # Gold
         stroke_width=2,
         stroke_fill=(0, 0, 0, 153),
+        **text_kwargs,
     )
 
     # 9. Render Reciter name at bottom-third
     font_reciter = _load_font(FONT_PATH, 46)
     reciter_text = prepare_line(reciter_name_ar)
-    bbox_rec = draw.textbbox((0, 0), reciter_text, font=font_reciter, stroke_width=3)
+    bbox_rec = draw.textbbox((0, 0), reciter_text, font=font_reciter, stroke_width=3, **text_kwargs)
     rw = bbox_rec[2] - bbox_rec[0]
     draw.text(
         ((width - rw) // 2, height - 120),
@@ -276,6 +290,7 @@ def _generate_text_overlay(
         fill=(255, 255, 255, 255),
         stroke_width=3,
         stroke_fill=(0, 0, 0, 204),
+        **text_kwargs,
     )
 
     # Save overlay image
