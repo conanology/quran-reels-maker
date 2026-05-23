@@ -916,6 +916,41 @@ def cmd_growth_engine(args):
                 printed += 1
                 
         print("="*70 + "\n")
+        
+    elif args.ge_command == 'ingest-stats':
+        from core.growth_engine import ingest_video_analytics
+        res = ingest_video_analytics(
+            video_id=args.video_id,
+            views=args.views,
+            likes=args.likes,
+            comments=args.comments,
+            retention_rate=args.retention,
+            ctr=args.ctr,
+            surah=args.surah,
+            reciter_key=args.reciter,
+            video_type=args.type
+        )
+        print(f"\n📊 Ingested analytics data: {json.dumps(res, indent=2)}")
+        
+    elif args.ge_command == 'run-feedback':
+        from core.growth_engine import run_feedback_loop_analysis
+        print("\n⚙️ Running Weekly Performance Feedback Loop Auto-Analysis...")
+        res = run_feedback_loop_analysis()
+        print(f"\n📊 Feedback Loop execution result: {json.dumps(res, indent=2, ensure_ascii=False)}")
+        
+    elif args.ge_command == 'start-ab-test':
+        from core.growth_engine import trigger_ab_test_experiment
+        res = trigger_ab_test_experiment(variable_type=args.variable)
+        print(f"\n🧪 Started A/B Test: {json.dumps(res, indent=2)}")
+        
+    elif args.ge_command == 'check-ab-tests':
+        from core.growth_engine import evaluate_active_ab_tests
+        print("\n🔍 Evaluating active A/B tests and selecting winners...")
+        res = evaluate_active_ab_tests()
+        if res:
+            print(f"\n🎉 A/B test results: {json.dumps(res, indent=2)}")
+        else:
+            print("\nNo active A/B tests completed yet.")
 
 
 def main():
@@ -1037,6 +1072,28 @@ Examples:
     
     # Growth Engine list
     ge_subparsers.add_parser('list', help='List the upcoming growth engine slot schedule')
+    
+    # Growth Engine ingest-stats
+    ingest_parser = ge_subparsers.add_parser('ingest-stats', help='Ingest performance metrics for a video')
+    ingest_parser.add_argument('--video-id', type=str, required=True, help='YouTube Video ID')
+    ingest_parser.add_argument('--views', type=int, required=True, help='Views count')
+    ingest_parser.add_argument('--likes', type=int, default=0, help='Likes count')
+    ingest_parser.add_argument('--comments', type=int, default=0, help='Comments count')
+    ingest_parser.add_argument('--retention', type=float, default=0.0, help='Retention rate (0.0 to 1.0)')
+    ingest_parser.add_argument('--ctr', type=float, default=0.0, help='Click-through rate (0.0 to 1.0)')
+    ingest_parser.add_argument('--surah', type=int, required=True, help='Surah number')
+    ingest_parser.add_argument('--reciter', type=str, required=True, help='Reciter key')
+    ingest_parser.add_argument('--type', type=str, choices=['short', 'long'], required=True, help='Video type')
+    
+    # Growth Engine run-feedback
+    ge_subparsers.add_parser('run-feedback', help='Run weekly performance feedback loop auto-analysis')
+    
+    # Growth Engine start-ab-test
+    ab_parser = ge_subparsers.add_parser('start-ab-test', help='Trigger an A/B test controlled experiment')
+    ab_parser.add_argument('--variable', type=str, choices=['reciter', 'ayah_length', 'thumbnail_style'], required=True, help='Variable to test')
+    
+    # Growth Engine check-ab-tests
+    ge_subparsers.add_parser('check-ab-tests', help='Evaluate active A/B tests and determine winners')
     
     args = parser.parse_args()
     

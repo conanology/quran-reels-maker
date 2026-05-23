@@ -182,8 +182,17 @@ def pick_reciter(format_type: str) -> str:
 def pick_surah(format_type: str, reciter_key: str) -> int:
     """
     Select an appropriate Surah based on priority tier, format,
-    and weekly repetition guardrails.
+    weekly repetition guardrails, and performance-based downweights.
     """
+    from database.models import get_setting
+    import json
+    
+    downweights = {}
+    try:
+        downweights = json.loads(get_setting("growth_engine_downweights", "{}"))
+    except Exception:
+        pass
+
     if "short" in format_type:
         # Volume play: proceed sequentially through current progress
         session = get_db_session()
@@ -192,8 +201,12 @@ def pick_surah(format_type: str, reciter_key: str) -> int:
             if progress:
                 surah = progress.current_surah
                 # Ensure guardrail check
-                if is_combo_repeated_recently(surah, reciter_key, days=7):
-                    # Pick a random short surah from last 20 surahs to avoid duplicate
+                key = f"{surah}:{reciter_key}"
+                is_repeated = is_combo_repeated_recently(surah, reciter_key, days=7)
+                is_downweighted = downweights.get(key, 1.0) < 0.5
+                
+                if is_repeated or is_downweighted:
+                    # Pick a random short surah from last 20 surahs to avoid duplicate/underperformer
                     surah = random.randint(100, 114)
                 return surah
             return random.randint(90, 114)
@@ -204,9 +217,16 @@ def pick_surah(format_type: str, reciter_key: str) -> int:
     tiers = S_TIER_SURAHS + A_TIER_SURAHS
     random.shuffle(tiers)
     
+    candidates = []
     for surah in tiers:
         if not is_combo_repeated_recently(surah, reciter_key, days=7):
-            return surah
+            w = downweights.get(f"{surah}:{reciter_key}", 1.0)
+            candidates.append((surah, w))
+            
+    if candidates:
+        surahs = [c[0] for c in candidates]
+        weights = [c[1] for c in candidates]
+        return random.choices(surahs, weights=weights)[0]
             
     # Absolute fallback
     return random.choice(S_TIER_SURAHS)
@@ -357,9 +377,32 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
     format_type = get_slot_format(slot_name)
     logger.info(f"Slot Selected: '{slot_name}' -> Format: '{format_type}'")
     
-    # 2. Select Reciter & Surah
-    reciter_key = pick_reciter(format_type)
-    surah = pick_surah(format_type, reciter_key)
+    # 2. Select Reciter & Surah (checking for queued outperforming combos from the feedback loop first)
+    from database.models import get_setting, set_setting
+    import json
+    
+    forced_combo_used = False
+    reciter_key = None
+    surah = None
+    
+    if "short" in format_type:
+        forced_combos_str = get_setting("growth_engine_forced_combos", "[]")
+        try:
+            forced_combos = json.loads(forced_combos_str)
+            if forced_combos:
+                next_combo = forced_combos.pop(0)
+                surah = next_combo["surah"]
+                reciter_key = next_combo["reciter_key"]
+                set_setting("growth_engine_forced_combos", json.dumps(forced_combos))
+                forced_combo_used = True
+                logger.info(f"🚀 Outperforming combo detected from feedback loop! Duplicating Surah {surah} + Reciter {reciter_key} for views optimization.")
+        except Exception as e:
+            logger.warning(f"Failed to process forced combos: {e}")
+            
+    if not forced_combo_used:
+        reciter_key = pick_reciter(format_type)
+        surah = pick_surah(format_type, reciter_key)
+        
     logger.info(f"AI Decision: Surah {surah} ({SURAH_NAMES_EN[surah-1]}), Reciter: {reciter_key}")
     
     # 3. Handle Generation & Metadata
@@ -523,3 +566,245 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
     except Exception as e:
         logger.exception(f"Failed executing growth engine slot: {e}")
         return {"status": "failed", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Performance Feedback Loop & self-optimization (Module 7/Analytics)
+# ---------------------------------------------------------------------------
+
+def ingest_video_analytics(
+    video_id: str,
+    views: int,
+    likes: int,
+    comments: int,
+    retention_rate: float,
+    ctr: float,
+    surah: int,
+    reciter_key: str,
+    video_type: str
+) -> Dict[str, Any]:
+    """
+    Ingest performance metrics for an uploaded video into the analytics database.
+    """
+    from database.models import get_db_session, VideoAnalytics
+    session = get_db_session()
+    try:
+        # Check if record already exists
+        record = session.query(VideoAnalytics).filter_by(video_id=video_id).first()
+        engagement_rate = ((likes + comments) / views) if views > 0 else 0.0
+        
+        if record:
+            record.views = views
+            record.likes = likes
+            record.comments = comments
+            record.retention_rate = retention_rate
+            record.ctr = ctr
+            record.engagement_rate = engagement_rate
+        else:
+            record = VideoAnalytics(
+                video_id=video_id,
+                views=views,
+                likes=likes,
+                comments=comments,
+                retention_rate=retention_rate,
+                ctr=ctr,
+                engagement_rate=engagement_rate,
+                surah=surah,
+                reciter_key=reciter_key,
+                video_type=video_type
+            )
+            session.add(record)
+        session.commit()
+        logger.info(f"Ingested metrics for video {video_id}: views={views}, engagement={engagement_rate:.1%}")
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "views": views,
+            "engagement_rate": engagement_rate
+        }
+    finally:
+        session.close()
+
+
+def run_feedback_loop_analysis() -> Dict[str, Any]:
+    """
+    Analyze recent video performance and update selection weights, durations,
+    and trigger A/B tests or warnings matching the blueprint optimization rules.
+    """
+    from database.models import get_db_session, VideoAnalytics, get_setting, set_setting
+    import json
+    
+    session = get_db_session()
+    actions = []
+    warnings = []
+    
+    try:
+        # Retrieve all recent analytics records
+        analytics = session.query(VideoAnalytics).order_by(VideoAnalytics.created_at.desc()).limit(50).all()
+        if not analytics:
+            return {"status": "no_data", "message": "No video analytics data available for feedback loop."}
+            
+        # Load current downweights and forced combos
+        downweights_str = get_setting("growth_engine_downweights", "{}")
+        try:
+            downweights = json.loads(downweights_str)
+        except Exception:
+            downweights = {}
+            
+        forced_combos_str = get_setting("growth_engine_forced_combos", "[]")
+        try:
+            forced_combos = json.loads(forced_combos_str)
+        except Exception:
+            forced_combos = []
+            
+        for record in analytics:
+            key = f"{record.surah}:{record.reciter_key}"
+            
+            # Short-form checks
+            if record.video_type == "short":
+                # Metric 1: Short engagement < 30% -> Underperform -> Reduce combination weight
+                if record.engagement_rate < 0.30:
+                    current_weight = downweights.get(key, 1.0)
+                    new_weight = max(0.1, current_weight - 0.2) # reduce weight by 20%
+                    downweights[key] = new_weight
+                    actions.append(f"Short {record.video_id} ({key}) engagement < 30% ({record.engagement_rate:.1%}). Reduced combo weight to {new_weight:.1f}")
+                
+                # Metric 2: Short engagement > 60% -> Outperform -> Duplicate combo
+                elif record.engagement_rate > 0.60:
+                    combo = {"surah": record.surah, "reciter_key": record.reciter_key}
+                    if combo not in forced_combos:
+                        forced_combos.append(combo)
+                        actions.append(f"Short {record.video_id} ({key}) engagement > 60% ({record.engagement_rate:.1%}). Queued combo for duplication.")
+                        
+            # Long-form checks
+            elif record.video_type == "long":
+                # Metric 3: Long-form retention < 40% -> Underperform -> Test shorter clip rotation
+                if record.retention_rate < 0.40:
+                    set_setting("longform_clip_duration", "6") # Set to 6s
+                    actions.append(f"Long-form {record.video_id} retention < 40% ({record.retention_rate:.1%}). Set clip rotation to 6-second clips.")
+                    
+            # Common checks
+            # Metric 4: CTR < 4% -> Thumbnail weak -> Request A/B test
+            if record.ctr < 0.04:
+                set_setting("request_ab_test_thumbnail", "true")
+                actions.append(f"Video {record.video_id} CTR < 4% ({record.ctr:.1%}). Thumbnail flagged for A/B testing.")
+                
+            # Metric 5: Comments > 20 -> Engagement winner -> Warn/Instruct
+            if record.comments > 20:
+                warnings.append(f"Engagement winner: Video {record.video_id} has {record.comments} comments! Pin related long-form link.")
+                
+        # Persist updated settings
+        set_setting("growth_engine_downweights", json.dumps(downweights))
+        set_setting("growth_engine_forced_combos", json.dumps(forced_combos))
+        
+        logger.success(f"Feedback loop completed. Applied {len(actions)} optimization actions.")
+        return {
+            "status": "success",
+            "actions_applied": actions,
+            "warnings_triggered": warnings,
+            "updated_downweights": downweights,
+            "queued_forced_combos": forced_combos
+        }
+        
+    finally:
+        session.close()
+
+
+def trigger_ab_test_experiment(variable_type: str) -> Dict[str, Any]:
+    """
+    Every 7 days, trigger one controlled A/B test experiment.
+    Variables: reciter, ayah_length, thumbnail_style
+    """
+    from database.models import get_db_session, ABTest
+    import uuid
+    import datetime
+    
+    if variable_type not in ["reciter", "ayah_length", "thumbnail_style"]:
+        raise ValueError(f"Invalid A/B test variable: {variable_type}")
+        
+    session = get_db_session()
+    try:
+        video_id_a = f"ab_a_{uuid.uuid4().hex[:8]}"
+        video_id_b = f"ab_b_{uuid.uuid4().hex[:8]}"
+        
+        experiment_name = f"exp_{variable_type}_{datetime.date.today().isoformat()}"
+        
+        test = ABTest(
+            experiment_name=experiment_name,
+            variable_type=variable_type,
+            video_id_a=video_id_a,
+            video_id_b=video_id_b,
+            status="active"
+        )
+        session.add(test)
+        session.commit()
+        
+        logger.info(f"Registered new A/B Test Experiment: '{experiment_name}' (Variable: {variable_type})")
+        return {
+            "status": "success",
+            "experiment_name": experiment_name,
+            "variable_type": variable_type,
+            "video_id_a": video_id_a,
+            "video_id_b": video_id_b
+        }
+    finally:
+        session.close()
+
+
+def evaluate_active_ab_tests() -> List[Dict[str, Any]]:
+    """
+    Check all active A/B tests, pull their metrics, select the winner, and adjust defaults.
+    """
+    from database.models import get_db_session, ABTest, VideoAnalytics, set_setting
+    import datetime
+    
+    session = get_db_session()
+    results = []
+    
+    try:
+        active_tests = session.query(ABTest).filter_by(status="active").all()
+        for test in active_tests:
+            # Look up metrics
+            metric_a = session.query(VideoAnalytics).filter_by(video_id=test.video_id_a).first()
+            metric_b = session.query(VideoAnalytics).filter_by(video_id=test.video_id_b).first()
+            
+            # Require both metrics to evaluate
+            if not metric_a or not metric_b:
+                logger.debug(f"Metrics not yet available for both sides of A/B test: '{test.experiment_name}'")
+                continue
+                
+            winner_id = None
+            if test.variable_type == "thumbnail_style":
+                # For thumbnails, CTR is the key metric
+                winner_id = test.video_id_a if metric_a.ctr >= metric_b.ctr else test.video_id_b
+                winner_ctr = max(metric_a.ctr, metric_b.ctr)
+                winner_style = "Mosque Gold" if winner_id == test.video_id_a else "Open Quran"
+                set_setting("default_thumbnail_template", winner_style)
+                logger.success(f"A/B Test Winner: Style default updated to '{winner_style}' (CTR: {winner_ctr:.1%})")
+            else:
+                score_a = metric_a.views * (1.0 + metric_a.engagement_rate)
+                score_b = metric_b.views * (1.0 + metric_b.engagement_rate)
+                winner_id = test.video_id_a if score_a >= score_b else test.video_id_b
+                
+                if test.variable_type == "reciter":
+                    winner_reciter = metric_a.reciter_key if winner_id == test.video_id_a else metric_b.reciter_key
+                    set_setting("default_reciter", winner_reciter)
+                    logger.success(f"A/B Test Winner: Default reciter updated to '{winner_reciter}'")
+            
+            test.winner_id = winner_id
+            test.status = "completed"
+            test.completed_at = datetime.datetime.utcnow()
+            
+            results.append({
+                "experiment": test.experiment_name,
+                "winner_video_id": winner_id,
+                "variable_type": test.variable_type
+            })
+            
+        if results:
+            session.commit()
+            
+        return results
+    finally:
+        session.close()
+

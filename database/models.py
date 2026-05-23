@@ -4,7 +4,7 @@ Database Models - SQLite models for tracking verse progress and reel history
 import datetime
 from pathlib import Path
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -196,6 +196,51 @@ class AppSettings(Base):
     
     def __repr__(self):
         return f"<AppSettings(key={self.key})>"
+
+
+class VideoAnalytics(Base):
+    """
+    Tracks historical performance metrics of uploaded videos for self-optimization.
+    """
+    __tablename__ = "video_analytics"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(String(50), unique=True, index=True, nullable=False)
+    views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    retention_rate = Column(Float, default=0.0)    # e.g., 0.45 for 45%
+    ctr = Column(Float, default=0.0)               # e.g., 0.05 for 5%
+    engagement_rate = Column(Float, default=0.0)   # e.g., 0.35 for 35% (likes + comments) / views
+    surah = Column(Integer, nullable=False)
+    reciter_key = Column(String(50), nullable=False)
+    video_type = Column(String(20), nullable=False) # short, long
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<VideoAnalytics(video_id={self.video_id}, views={self.views}, engagement={self.engagement_rate:.1%})>"
+
+
+class ABTest(Base):
+    """
+    Tracks active/completed A/B experiments conducted by the growth engine.
+    """
+    __tablename__ = "ab_test"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    experiment_name = Column(String(100), nullable=False)
+    variable_type = Column(String(50), nullable=False)   # reciter, ayah_length, thumbnail_style
+    video_id_a = Column(String(50), nullable=False)
+    video_id_b = Column(String(50), nullable=False)
+    winner_id = Column(String(50), nullable=True)
+    status = Column(String(20), default="active")         # active, completed
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<ABTest(name={self.experiment_name}, status={self.status})>"
+
+
 
 
 # Utility functions for settings
