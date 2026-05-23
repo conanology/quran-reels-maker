@@ -835,3 +835,107 @@ def evaluate_active_ab_tests() -> List[Dict[str, Any]]:
     finally:
         session.close()
 
+
+def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
+    """
+    Query the YouTube Data API for public metrics (views, likes, comments)
+    of all uploaded videos in our history, and ingest them.
+    """
+    from database.models import get_db_session, ReelHistory, LongformHistory
+    from youtube.auth import get_authenticated_service
+    
+    session = get_db_session()
+    ingested_count = 0
+    errors = []
+    
+    try:
+        # Get recently uploaded Shorts
+        reels = session.query(ReelHistory).filter(
+            ReelHistory.youtube_id.isnot(None),
+            ReelHistory.status == "uploaded"
+        ).all()
+        
+        longforms = session.query(LongformHistory).filter(
+            LongformHistory.youtube_id.isnot(None),
+            LongformHistory.status == "uploaded"
+        ).all()
+        
+        # Build map of id -> metadata
+        video_map = {}
+        for r in reels:
+            video_map[r.youtube_id] = {
+                "surah": r.surah,
+                "reciter_key": r.reciter_key,
+                "video_type": "short"
+            }
+        for l in longforms:
+            video_map[l.youtube_id] = {
+                "surah": l.surah_start,
+                "reciter_key": l.reciter_key,
+                "video_type": "long"
+            }
+            
+        video_ids = list(video_map.keys())
+        if not video_ids:
+            return {"status": "no_videos", "message": "No uploaded videos found in history."}
+            
+        try:
+            service = get_authenticated_service()
+        except Exception as e:
+            logger.error(f"Failed to authenticate YouTube service for stats: {e}")
+            return {"status": "auth_error", "message": str(e)}
+            
+        # Chunk requests up to 50 video IDs
+        chunk_size = 50
+        for i in range(0, len(video_ids), chunk_size):
+            chunk = video_ids[i:i + chunk_size]
+            logger.info(f"Querying statistics for {len(chunk)} videos from YouTube API...")
+            
+            try:
+                request = service.videos().list(
+                    part="statistics",
+                    id=",".join(chunk)
+                )
+                response = request.execute()
+                
+                for item in response.get("items", []):
+                    vid_id = item["id"]
+                    stats = item.get("statistics", {})
+                    
+                    views = int(stats.get("viewCount", 0))
+                    likes = int(stats.get("likeCount", 0))
+                    comments = int(stats.get("commentCount", 0))
+                    
+                    meta = video_map[vid_id]
+                    
+                    # Preserve private retention / CTR from database if they already exist
+                    from database.models import VideoAnalytics
+                    existing_analytics = session.query(VideoAnalytics).filter_by(video_id=vid_id).first()
+                    retention = existing_analytics.retention_rate if existing_analytics else 0.50
+                    ctr = existing_analytics.ctr if existing_analytics else 0.05
+                    
+                    ingest_video_analytics(
+                        video_id=vid_id,
+                        views=views,
+                        likes=likes,
+                        comments=comments,
+                        retention_rate=retention,
+                        ctr=ctr,
+                        surah=meta["surah"],
+                        reciter_key=meta["reciter_key"],
+                        video_type=meta["video_type"]
+                    )
+                    ingested_count += 1
+            except Exception as e:
+                logger.error(f"Error querying statistics for chunk: {e}")
+                errors.append(str(e))
+                
+        return {
+            "status": "success",
+            "ingested_count": ingested_count,
+            "errors": errors
+        }
+    finally:
+        session.close()
+
+

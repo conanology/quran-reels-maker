@@ -932,6 +932,12 @@ def cmd_growth_engine(args):
         )
         print(f"\n📊 Ingested analytics data: {json.dumps(res, indent=2)}")
         
+    elif args.ge_command == 'auto-ingest-stats':
+        from core.growth_engine import auto_ingest_youtube_public_metrics
+        print("\n⚙️ Autonomously querying YouTube API for video performance stats...")
+        res = auto_ingest_youtube_public_metrics()
+        print(f"\n📊 Ingestion result: {json.dumps(res, indent=2)}")
+        
     elif args.ge_command == 'run-feedback':
         from core.growth_engine import run_feedback_loop_analysis
         print("\n⚙️ Running Weekly Performance Feedback Loop Auto-Analysis...")
@@ -1094,6 +1100,9 @@ Examples:
     
     # Growth Engine check-ab-tests
     ge_subparsers.add_parser('check-ab-tests', help='Evaluate active A/B tests and determine winners')
+    
+    # Growth Engine auto-ingest-stats
+    ge_subparsers.add_parser('auto-ingest-stats', help='Autonomously query YouTube API and ingest stats')
     
     args = parser.parse_args()
     

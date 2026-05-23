@@ -1,0 +1,125 @@
+name: Daily Quran Growth Engine
+
+on:
+  schedule:
+    # Trigger according to Mecca timezone slots (UTC+3)
+    # 5:00 AM Mecca Time -> 02:00 UTC (Short)
+    - cron: '0 2 * * *'
+    # 8:00 PM Mecca Time -> 17:00 UTC (Short)
+    - cron: '0 17 * * *'
+    # 9:00 PM Mecca Friday -> 18:00 UTC Friday (Weekly Compilation / Full Surah Longform)
+    - cron: '0 18 * * 5'
+    # 10:00 PM Mecca Saturday -> 19:00 UTC Saturday (Sleep Relaxation Longform)
+    - cron: '0 19 * * 6'
+
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'Force a specific slot (morning_short, evening_short, friday_long, saturday_sleep)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Run in dry-run mode (no compilation or uploads)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  growth-engine-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # Compilation of longforms can take up to 2-3 hours
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore YouTube credentials
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
+          echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
+
+      - name: Ensure Amiri font exists
+        run: |
+          mkdir -p assets/fonts/amiri
+          if [ ! -f assets/fonts/amiri/Amiri-Bold.ttf ]; then
+            echo "Downloading Uthmani Uthmanic Arabic Amiri font..."
+            curl -sL "https://github.com/aliftype/amiri/releases/download/1.000/Amiri-1.000.zip" -o /tmp/amiri.zip
+            unzip -jo /tmp/amiri.zip "*/Amiri-Bold.ttf" -d assets/fonts/amiri/ || true
+          fi
+
+      - name: Autonomously Ingest Performance Stats & Optimize
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: |
+          # 1. Query YouTube Data API and ingest public statistics (views, likes, comments)
+          python main.py growth-engine auto-ingest-stats || echo "Failed to auto-ingest statistics, proceeding..."
+          
+          # 2. Run feedback loop self-optimization engine (applies weights, downweights, queues duplication)
+          python main.py growth-engine run-feedback || echo "Failed to run feedback analysis, proceeding..."
+          
+          # 3. Check active A/B test experiments and promote winners
+          python main.py growth-engine check-ab-tests || echo "Failed to check A/B tests, proceeding..."
+
+      - name: Run Growth Engine Active Slot
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          VIDEO_ENCODER: libx264  # Force CPU encoding on GitHub Actions runner
+          IMAGEMAGICK_BINARY: /usr/bin/convert
+        run: |
+          FORCED_SLOT=""
+          if [ -n "${{ github.event.inputs.slot }}" ]; then
+            FORCED_SLOT="--slot ${{ github.event.inputs.slot }}"
+          fi
+
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+
+          python main.py growth-engine run $FORCED_SLOT $DRY_RUN_FLAG
+
+      - name: Commit progress & DB updates
+        if: always()
+        run: |
+          rm -f client_secrets.json token.json token.pickle
+          
+          # Clean large render folders
+          rm -rf outputs/videos/*
+          rm -rf outputs/audio/*
+          rm -rf assets/downloaded_bg/*
+          rm -rf outputs/longform/downloads/*
+          rm -rf outputs/longform/backgrounds/*
+          rm -rf outputs/longform/output/*
+          rm -rf outputs/longform/temp/*
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add database/quran_reels.db
+          if [ -f outputs/longform/background_usage.json ]; then
+            git add outputs/longform/background_usage.json
+          fi
+          
+          git diff --cached --quiet || git commit -m "Auto-update Quran progress and performance databases [skip ci]"
+          git push

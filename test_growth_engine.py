@@ -25,7 +25,8 @@ from core.growth_engine import (
     ingest_video_analytics,
     run_feedback_loop_analysis,
     trigger_ab_test_experiment,
-    evaluate_active_ab_tests
+    evaluate_active_ab_tests,
+    auto_ingest_youtube_public_metrics
 )
 from database.models import (
     get_db_session,
@@ -280,6 +281,15 @@ def test_dry_run_slots():
         
     logger.success("Dry-Run execution tests passed.")
 
+
+def test_auto_ingest_metrics():
+    logger.info("Testing Auto Ingestion of YouTube public metrics...")
+    res = auto_ingest_youtube_public_metrics()
+    logger.info(f"Auto Ingestion result: {json.dumps(res, indent=2)}")
+    assert res["status"] in ["success", "no_videos", "auth_error"], f"Unexpected auto ingestion status: {res['status']}"
+    logger.success("Auto Ingestion of YouTube public metrics test passed.")
+
+
 def run_all_tests():
     init_database()
     logger.info("Starting DailyQuran Growth Engine Verification Tests...")
@@ -299,6 +309,8 @@ def run_all_tests():
         test_feedback_loop_performance_analytics()
         print("-" * 50)
         test_ab_test_controlled_experiments()
+        print("-" * 50)
+        test_auto_ingest_metrics()
         print("-" * 50)
         test_dry_run_slots()
         print("="*60)
