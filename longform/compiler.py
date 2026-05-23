@@ -160,41 +160,69 @@ def _generate_text_overlay(
     cleaned_text = re.sub(r'\s*﴿[^﴾]*﴾\s*$', '', arabic_text)
     cleaned_text = _clean_arabic(cleaned_text).strip()
 
-    # 4. Determine font size and wrapping from word count
     words = cleaned_text.split()
-    word_count = len(words)
 
-    font_size = 62
-    words_per_line = 5
-    for config in FONT_SIZE_CONFIG.values():
-        if word_count >= config["min_words"]:
-            font_size = config["font_size"]
-            words_per_line = config["words_per_line"]
+    # 4. Helper function to wrap text dynamically using ImageDraw.textbbox
+    def wrap_text(words: List[str], font: ImageFont.FreeTypeFont, max_w: int) -> List[str]:
+        lines = []
+        current_line_words = []
+        for word in words:
+            test_line_words = current_line_words + [word]
+            test_line = " ".join(test_line_words)
+            disp = prepare_line(test_line)
+            bbox = draw.textbbox((0, 0), disp, font=font, stroke_width=3)
+            w = bbox[2] - bbox[0]
+            if w <= max_w or not current_line_words:
+                current_line_words = test_line_words
+            else:
+                lines.append(" ".join(current_line_words))
+                current_line_words = [word]
+        if current_line_words:
+            lines.append(" ".join(current_line_words))
+        return lines
+
+    # 5. Iterative wrap and scale algorithm
+    max_w = 1200
+    max_h = 450
+    max_lines = 4
+
+    font_size = 72
+    min_font_size = 36
+    final_lines = []
+    final_line_sizes = []
+    font_ayah = None
+
+    while font_size >= min_font_size:
+        font_ayah = _load_font(FONT_PATH, font_size)
+        wrapped_lines = wrap_text(words, font_ayah, max_w)
+        
+        line_sizes = []
+        for line in wrapped_lines:
+            disp = prepare_line(line)
+            bbox = draw.textbbox((0, 0), disp, font=font_ayah, stroke_width=3)
+            line_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1]))
+            
+        total_text_h = sum(h for w, h in line_sizes) + int(font_size * 0.25) * (len(wrapped_lines) - 1)
+        
+        if total_text_h <= max_h and len(wrapped_lines) <= max_lines:
+            final_lines = wrapped_lines
+            final_line_sizes = line_sizes
             break
+            
+        if font_size == min_font_size:
+            final_lines = wrapped_lines
+            final_line_sizes = line_sizes
+            break
+            
+        font_size -= 4
 
-    # 5. Wrap text into lines
-    lines = [
-        " ".join(words[i : i + words_per_line])
-        for i in range(0, len(words), words_per_line)
-    ]
-
-    # 6. Measure and render main Arabic text lines (centered vertically and horizontally)
-    font_ayah = _load_font(FONT_PATH, font_size)
-    prepared_lines = []
-    line_sizes = []
-
-    for line in lines:
-        disp = prepare_line(line)
-        prepared_lines.append(disp)
-        # Measure line with stroke width
-        bbox = draw.textbbox((0, 0), disp, font=font_ayah, stroke_width=3)
-        line_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1]))
-
-    total_text_h = sum(h for w, h in line_sizes) + int(font_size * 0.25) * (len(lines) - 1)
+    # 6. Render main Arabic text lines (centered vertically and horizontally)
+    total_text_h = sum(h for w, h in final_line_sizes) + int(font_size * 0.25) * (len(final_lines) - 1)
     y_cursor = (height - total_text_h) // 2
 
-    for i, disp in enumerate(prepared_lines):
-        line_w, line_h = line_sizes[i]
+    for i, line in enumerate(final_lines):
+        disp = prepare_line(line)
+        line_w, line_h = final_line_sizes[i]
         x = (width - line_w) // 2
 
         draw.text(
@@ -268,12 +296,13 @@ def _render_ayah_segment(
     padding_after: float = 0.5,
     color_grade: Optional[Dict] = None,
     overlay_opacity: float = 0.35,
+    ken_burns: Optional[Dict] = None,
 ) -> float:
     """
     Render a single ayah segment as a 16:9 video clip.
 
     Creates a video of duration = audio_duration + padding_after with:
-    - Cinematic B-roll background (looped)
+    - Cinematic B-roll background (looped, zoomed/panned via Ken Burns)
     - Transparent PNG overlay with:
       - Arabic text wrapped and centered
       - Correctly oriented ornate bracket and ayah number (top-right)
@@ -307,10 +336,38 @@ def _render_ayah_segment(
         bs = color_grade.get("bs", 0)
         color_filter = f",colorbalance=rs={rs}:gs={gs}:bs={bs}"
 
+    # Ken Burns zoom/pan filter
+    zoom_filter = ""
+    if ken_burns:
+        zoom_start = ken_burns.get("zoom_start", 1.0)
+        zoom_end = ken_burns.get("zoom_end", 1.05)
+        pan_x = ken_burns.get("pan_x", "center")
+        pan_y = ken_burns.get("pan_y", "center")
+        total_frames = int(total_duration * LONGFORM_FPS)
+        
+        # Interpolation expression for zoom
+        z_expr = f"{zoom_start}+({zoom_end}-{zoom_start})*(on/{total_frames})"
+        
+        if pan_x == "left":
+            x_expr = "0"
+        elif pan_x == "right":
+            x_expr = "iw-iw/zoom"
+        else:
+            x_expr = "(iw-iw/zoom)/2"
+            
+        if pan_y == "up":
+            y_expr = "0"
+        elif pan_y == "down":
+            y_expr = "ih-ih/zoom"
+        else:
+            y_expr = "(ih-ih/zoom)/2"
+            
+        zoom_filter = f",zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d=1:s=1920x1080:fps={LONGFORM_FPS}"
+
     # Build filter complex
     filter_complex = (
-        # Background: scale to cover 1920x1080, crop center, apply color grade
-        f"[0:v]scale=1920:-1,crop=1920:1080:(in_w-1920)/2:(in_h-1080)/2{color_filter}[bg_raw]; "
+        # Background: scale to cover 1920x1080, crop center, apply color grade and zoompan
+        f"[0:v]scale=1920:-1,crop=1920:1080:(in_w-1920)/2:(in_h-1080)/2{color_filter}{zoom_filter}[bg_raw]; "
         # Dark overlay
         f"color=black@{overlay_opacity}:s=1920x1080:d={total_duration}[dark]; "
         f"[bg_raw][dark]overlay=0:0[bg]; "
@@ -527,6 +584,7 @@ def generate_longform(
                     padding_after=seg_padding,
                     color_grade=style.get("color_grade"),
                     overlay_opacity=style.get("overlay_opacity", 0.35),
+                    ken_burns=style.get("ken_burns"),
                 )
 
                 processed_segments.append(str(seg_output))

@@ -18,6 +18,47 @@ _engine = None
 _SessionLocal = None
 
 
+class RetryingSession(Session):
+    """
+    SQLAlchemy session class that automatically retries commits on SQLite lock/busy errors.
+    """
+    def commit(self):
+        import time
+        import sqlite3
+        from sqlalchemy.exc import OperationalError
+        from loguru import logger
+        
+        max_retries = 5
+        initial_backoff = 0.5
+        backoff_factor = 2.0
+        retries = 0
+        backoff = initial_backoff
+        
+        while True:
+            try:
+                super().commit()
+                return
+            except OperationalError as e:
+                is_locked = False
+                orig = getattr(e, 'orig', None)
+                if orig and isinstance(orig, sqlite3.OperationalError) and "locked" in str(orig).lower():
+                    is_locked = True
+                elif "locked" in str(e).lower() or "busy" in str(e).lower():
+                    is_locked = True
+                
+                if is_locked and retries < max_retries:
+                    retries += 1
+                    logger.warning(
+                        f"Database is locked/busy. Retrying transaction commit ({retries}/{max_retries}) "
+                        f"in {backoff:.2f}s..."
+                    )
+                    time.sleep(backoff)
+                    backoff *= backoff_factor
+                else:
+                    logger.error("Database lock retry attempts exhausted or non-lock error occurred.")
+                    raise e
+
+
 def get_engine():
     """Get or create the database engine."""
     global _engine
@@ -27,7 +68,10 @@ def get_engine():
         
         _engine = create_engine(
             f"sqlite:///{DATABASE_PATH}",
-            connect_args={"check_same_thread": False},
+            connect_args={
+                "check_same_thread": False,
+                "timeout": 60  # Wait up to 60 seconds for lock release
+            },
             echo=False
         )
     return _engine
@@ -38,11 +82,13 @@ def get_db_session() -> Session:
     global _SessionLocal
     if _SessionLocal is None:
         _SessionLocal = sessionmaker(
+            class_=RetryingSession,
             autocommit=False,
             autoflush=False,
             bind=get_engine()
         )
     return _SessionLocal()
+
 
 
 def init_database():
