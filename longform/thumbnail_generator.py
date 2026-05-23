@@ -81,22 +81,35 @@ def generate_longform_thumbnail(
     )
 
     # 3. Load Fonts
+    # We want distinct typography:
+    # - Arabic title: Cairo-Bold or Zain-Bold (very modern/premium) or fallback Amiri-Bold
+    # - English title: Dubai-Bold or Amiri-Bold (serif matches translation style nicely)
+    # - Subtitle & Reciter: Dubai-Bold or Zain-Bold
     font_large_ar = None
     font_large_en = None
     font_medium = None
+    font_small = None
     
-    if FONT_PATH.exists():
-        font_large_ar = ImageFont.truetype(str(FONT_PATH), 86)
-        font_large_en = ImageFont.truetype(str(FONT_PATH), 64)
-        font_medium = ImageFont.truetype(str(FONT_PATH), 34)
-    else:
-        # Fallbacks
+    font_ar_path = FONTS_DIR / "amiri" / "Amiri-Bold.ttf"
+
+    font_en_path = FONTS_DIR / "dubai" / "Dubai-Bold.ttf"
+    if not font_en_path.exists():
+        font_en_path = FONTS_DIR / "amiri" / "Amiri-Bold.ttf"
+
+    try:
+        font_large_ar = ImageFont.truetype(str(font_ar_path), 96)
+        font_large_en = ImageFont.truetype(str(font_en_path), 76)
+        font_medium = ImageFont.truetype(str(font_en_path), 36)
+        font_small = ImageFont.truetype(str(font_en_path), 28)
+    except Exception as e:
+        logger.warning(f"Could not load custom fonts, using default fallbacks: {e}")
         try:
-            font_large_ar = ImageFont.truetype("Arial", 80)
-            font_large_en = ImageFont.truetype("Arial", 60)
-            font_medium = ImageFont.truetype("Arial", 30)
+            font_large_ar = ImageFont.truetype("Arial", 90)
+            font_large_en = ImageFont.truetype("Arial", 70)
+            font_medium = ImageFont.truetype("Arial", 32)
+            font_small = ImageFont.truetype("Arial", 26)
         except OSError:
-            font_large_ar = font_large_en = font_medium = ImageFont.load_default()
+            font_large_ar = font_large_en = font_medium = font_small = ImageFont.load_default()
 
     # 4. Prepare Arabic Surah Title text
     if surah_start == surah_end:
@@ -126,23 +139,23 @@ def generate_longform_thumbnail(
     subtitle_display = "BEAUTIFUL & HEART SOOTHING RECITATION"
 
     # 7. Render Text Layers (all centered horizontally)
-    # y positions:
-    # - Arabic title: 120
-    # - English title: 260
-    # - Subtitle: 400
-    # - Reciter name: 540
+    # Optimized visual spacing:
+    # - Arabic title (Cairo/Zain): y=110, size=96, premium gold color
+    # - English title (Dubai-Bold): y=250, size=76, white
+    # - Subtitle: y=420, size=36, gold/yellow, smaller tracking (represented by smaller font if needed, font_medium)
+    # - Reciter name: y=530, size=28 (font_small), clean light gray
     
     # Render Arabic Title (Gold)
     bbox_ar = draw.textbbox((0, 0), ar_display, font=font_large_ar)
     ar_w = bbox_ar[2] - bbox_ar[0]
     draw_text_with_stroke(
         draw,
-        ((1280 - ar_w) // 2, 120),
+        ((1280 - ar_w) // 2, 110),
         ar_display,
         font=font_large_ar,
         text_color=(212, 175, 55, 255),
         stroke_color=(0, 0, 0, 255),
-        stroke_width=4
+        stroke_width=5
     )
 
     # Render English Title (White)
@@ -150,12 +163,12 @@ def generate_longform_thumbnail(
     en_w = bbox_en[2] - bbox_en[0]
     draw_text_with_stroke(
         draw,
-        ((1280 - en_w) // 2, 260),
+        ((1280 - en_w) // 2, 250),
         en_display,
         font=font_large_en,
         text_color=(255, 255, 255, 255),
         stroke_color=(0, 0, 0, 255),
-        stroke_width=4
+        stroke_width=5
     )
 
     # Render Subtitle (Gold/Yellow)
@@ -163,23 +176,23 @@ def generate_longform_thumbnail(
     sub_w = bbox_sub[2] - bbox_sub[0]
     draw_text_with_stroke(
         draw,
-        ((1280 - sub_w) // 2, 400),
+        ((1280 - sub_w) // 2, 420),
         subtitle_display,
         font=font_medium,
         text_color=(255, 215, 0, 255),  # Bright gold/yellow
         stroke_color=(0, 0, 0, 255),
-        stroke_width=3
+        stroke_width=4
     )
 
     # Render Reciter Name (White/Light Gray)
-    bbox_rec = draw.textbbox((0, 0), reciter_display, font=font_medium)
+    bbox_rec = draw.textbbox((0, 0), reciter_display, font=font_small)
     rec_w = bbox_rec[2] - bbox_rec[0]
     draw_text_with_stroke(
         draw,
         ((1280 - rec_w) // 2, 530),
         reciter_display,
-        font=font_medium,
-        text_color=(240, 240, 240, 255),
+        font=font_small,
+        text_color=(235, 235, 235, 255),
         stroke_color=(0, 0, 0, 255),
         stroke_width=3
     )

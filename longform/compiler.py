@@ -815,14 +815,6 @@ def generate_longform(
     if thumbnail_bg_image_path and thumbnail_bg_image_path.exists():
         try:
             logger.info(f"Generating YouTube thumbnail: {thumbnail_path.name}")
-            # Keep first part of title (before pipe or emoji) to make it short and punchy
-            custom_title_en = None
-            if ai_title:
-                clean_title = ai_title.split("|")[0].split(" - ")[0].strip()
-                clean_title = re.sub(r'[^\w\s-]', '', clean_title).strip()
-                if 5 < len(clean_title) < 40:
-                    custom_title_en = clean_title
-
             generate_longform_thumbnail(
                 surah_start=surah_start,
                 surah_end=surah_end,
@@ -830,7 +822,7 @@ def generate_longform(
                 reciter_name_en=reciter_name_en,
                 bg_image_path=thumbnail_bg_image_path,
                 output_path=thumbnail_path,
-                custom_title_en=custom_title_en
+                custom_title_en=None
             )
             thumbnail_generated = True
         except Exception as e:
