@@ -234,3 +234,83 @@ def get_cinematic_background(min_duration: int = 30) -> Optional[Path]:
 
     logger.error("No cinematic background available (Pexels and cache both exhausted)")
     return None
+
+
+def get_ai_landscape_background(surah: int, start_ayah: int) -> Optional[Path]:
+    """
+    Generate a landscape AI themed background video based on the translation of the first ayah.
+    1. Fetch translation.
+    2. Generate visual prompt.
+    3. Download landscape (1920x1080) image from Pollinations.ai.
+    4. Convert image to 60-second zoom-in MP4 video.
+    5. Return video Path.
+    """
+    import subprocess
+    import time
+    import urllib.parse
+    from core.quran_api import get_ayah_translation
+    from core.ai_brain import generate_visual_prompt
+
+    # 1. Fetch translation
+    try:
+        translation = get_ayah_translation(surah, start_ayah)
+    except Exception as e:
+        logger.warning(f"Could not get translation for AI background: {e}")
+        return None
+
+    if not translation:
+        logger.warning(f"No translation found for {surah}:{start_ayah}")
+        return None
+
+    # 2. Generate visual prompt
+    visual_prompt = generate_visual_prompt(translation)
+    if not visual_prompt:
+        logger.warning("Could not generate visual prompt from AI brain.")
+        return None
+
+    # 3. Download landscape image
+    encoded_prompt = urllib.parse.quote(visual_prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&model=flux&nologo=true"
+    
+    temp_jpg = BACKGROUNDS_DIR / f"temp_ai_bg_{int(time.time())}.jpg"
+    try:
+        logger.info(f"Downloading themed AI landscape background from Pollinations: {temp_jpg.name}")
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            with open(temp_jpg, "wb") as f:
+                f.write(response.content)
+        else:
+            logger.error(f"Pollinations landscape API error: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to download AI landscape image: {e}")
+        return None
+
+    # 4. Convert image to 60-second zoom-in MP4 video using FFmpeg
+    output_mp4 = BACKGROUNDS_DIR / f"ai_landscape_bg_{int(time.time())}.mp4"
+    logger.info(f"Converting static image to 60-second video clip using FFmpeg: {output_mp4.name}")
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", str(temp_jpg),
+        "-vf", "zoompan=z='1.0+0.05*(on/1800)':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=1:s=1920x1080:fps=30",
+        "-c:v", "libx264",
+        "-t", "60",
+        "-pix_fmt", "yuv420p",
+        str(output_mp4)
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Cleanup temp JPG
+        temp_jpg.unlink(missing_ok=True)
+        logger.success(f"Generated landscape background video from AI image: {output_mp4.name}")
+        return output_mp4
+    except Exception as e:
+        logger.error(f"FFmpeg image to video conversion failed: {e}")
+        if 'result' in locals() and result.stderr:
+             logger.error(f"FFmpeg stderr: {result.stderr}")
+        temp_jpg.unlink(missing_ok=True)
+        output_mp4.unlink(missing_ok=True)
+        return None

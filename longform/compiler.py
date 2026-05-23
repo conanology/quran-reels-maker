@@ -503,18 +503,25 @@ def generate_longform(
     # If no background provided, try to get one
     if not background_path:
         try:
-            from longform.background_renderer import get_cinematic_background
-            bg = get_cinematic_background(min_duration=30)
+            from longform.background_renderer import get_ai_landscape_background, get_cinematic_background
+            logger.info("Attempting to generate dynamic AI landscape background...")
+            bg = get_ai_landscape_background(surah_start, ayah_start or 1)
             if bg:
                 background_path = str(bg)
-                logger.info(f"Using cinematic background: {bg.name}")
+                logger.info(f"Using dynamic AI-generated landscape background: {bg.name}")
+            else:
+                logger.warning("AI background generation returned None, falling back to Pexels/cache.")
+                bg = get_cinematic_background(min_duration=30)
+                if bg:
+                    background_path = str(bg)
+                    logger.info(f"Using fallback cinematic background: {bg.name}")
         except Exception as e:
-            logger.warning(f"Could not get cinematic background: {e}")
+            logger.warning(f"Could not get dynamic or cinematic background: {e}")
 
     if not background_path:
         raise RuntimeError(
             "No background video available. Please add a video to "
-            "outputs/longform/backgrounds/ or set PEXELS_API_KEY."
+            "outputs/longform/backgrounds/, set OPENROUTER_API_KEY, or set PEXELS_API_KEY."
         )
 
     # Process all ayahs
