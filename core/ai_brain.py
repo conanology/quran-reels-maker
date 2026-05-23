@@ -164,3 +164,58 @@ def generate_video_metadata(
     except Exception as e:
         logger.error(f"Failed to parse AI metadata JSON: {e}\nRaw response:\n{ai_response}")
         return {}
+
+
+def generate_longform_video_metadata(
+    surah_start: int,
+    surah_end: int,
+    reciter_name: str,
+    translation: str,
+) -> dict:
+    """
+    Generate high-CTR title, descriptive reflection, and tags for long-form videos.
+    """
+    from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN
+    
+    if surah_start == surah_end:
+        surah_label = f"Surah {SURAH_NAMES_EN[surah_start - 1]} ({SURAH_NAMES_AR[surah_start - 1]})"
+    else:
+        surah_label = f"Surahs {SURAH_NAMES_EN[surah_start - 1]}-{SURAH_NAMES_EN[surah_end - 1]} ({SURAH_NAMES_AR[surah_start - 1]}-{SURAH_NAMES_AR[surah_end - 1]})"
+
+    system_prompt = (
+        "You are an expert YouTube growth strategist specializing in Islamic content. Your task is to generate highly engaging, "
+        "SEO-optimized metadata for a long-form YouTube video of Quran recitation.\n"
+        "Output a JSON object containing exactly three fields:\n"
+        "1. \"title\": a high-CTR, emotionally resonant title (maximum 90 characters) that includes a beautiful thematic hook, "
+        "the Surah names in both Arabic and English, and the reciter's name (e.g., \"Heart Soothing Recitation 🕊️ | سورة الملك كاملة | Surah Al-Mulk Full - Mishary Alafasy\").\n"
+        "2. \"reflection\": a beautifully written, reflective introduction paragraph (3-4 sentences) explaining the key themes, "
+        "spiritual benefits, or meanings of the Surah(s) compiled. This will be placed at the top of the description to engage listeners.\n"
+        "3. \"tags\": a list of 15-20 highly searched tags/keywords for this specific compilation.\n\n"
+        "STRICT RULE: Output ONLY raw JSON. Do not include markdown code block formatting or explanations outside the JSON."
+    )
+
+    prompt = (
+        f"Compilation: {surah_label}\n"
+        f"Reciter: {reciter_name}\n"
+        f"Starting Verse Translation: \"{translation}\"\n\n"
+        "Generate the long-form metadata JSON now:"
+    )
+
+    ai_response = call_openrouter(prompt, system_prompt)
+    if not ai_response:
+        return {}
+
+    try:
+        cleaned_json = _clean_json_response(ai_response)
+        metadata = json.loads(cleaned_json)
+        
+        # Basic validation
+        if all(k in metadata for k in ("title", "reflection", "tags")):
+            logger.info(f"AI generated longform title: {metadata['title']}")
+            return metadata
+        else:
+            logger.warning(f"AI longform metadata response missing required fields: {metadata}")
+            return {}
+    except Exception as e:
+        logger.error(f"Failed to parse AI longform metadata JSON: {e}\nRaw response:\n{ai_response}")
+        return {}

@@ -53,6 +53,8 @@ from config.settings import (
 )
 from core.ayah_fetcher import fetch_single_ayah
 from core.audio_processor import get_audio_duration, cleanup_audio_files
+from core.ai_brain import generate_longform_video_metadata
+from longform.thumbnail_generator import generate_longform_thumbnail
 
 
 # Font path for Arabic text overlay
@@ -500,15 +502,20 @@ def generate_longform(
     audio_temp = LONGFORM_TEMP_DIR / "audio"
     audio_temp.mkdir(exist_ok=True)
 
+    thumbnail_bg_image_path = None
+    is_extracted_bg = False
+
     # If no background provided, try to get one
     if not background_path:
         try:
             from longform.background_renderer import get_ai_landscape_background, get_cinematic_background
             logger.info("Attempting to generate dynamic AI landscape background...")
-            bg = get_ai_landscape_background(surah_start, ayah_start or 1)
-            if bg:
-                background_path = str(bg)
-                logger.info(f"Using dynamic AI-generated landscape background: {bg.name}")
+            bg_res = get_ai_landscape_background(surah_start, ayah_start or 1)
+            if bg_res:
+                bg_video, bg_image = bg_res
+                background_path = str(bg_video)
+                thumbnail_bg_image_path = bg_image
+                logger.info(f"Using dynamic AI-generated landscape background: {bg_video.name}")
             else:
                 logger.warning("AI background generation returned None, falling back to Pexels/cache.")
                 bg = get_cinematic_background(min_duration=30)
@@ -523,6 +530,29 @@ def generate_longform(
             "No background video available. Please add a video to "
             "outputs/longform/backgrounds/, set OPENROUTER_API_KEY, or set PEXELS_API_KEY."
         )
+
+    # Extract frame from video background for thumbnail if we don't have a direct image
+    if background_path and not thumbnail_bg_image_path:
+        extracted_jpg = LONGFORM_TEMP_DIR / f"extracted_thumb_bg_{int(datetime.datetime.now().timestamp())}.jpg"
+        logger.info(f"Extracting thumbnail background frame from video: {Path(background_path).name}")
+        extract_cmd = [
+            "ffmpeg", "-y",
+            "-ss", "00:00:01",
+            "-i", background_path,
+            "-vframes", "1",
+            str(extracted_jpg)
+        ]
+        try:
+            result = subprocess.run(extract_cmd, capture_output=True, text=True)
+            if result.returncode == 0 and extracted_jpg.exists():
+                thumbnail_bg_image_path = extracted_jpg
+                is_extracted_bg = True
+            else:
+                logger.warning(f"FFmpeg frame extraction failed: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Failed to extract frame from video for thumbnail: {e}")
+
+    first_translation = ""
 
     # Process all ayahs
     processed_segments = []
@@ -568,6 +598,8 @@ def generate_longform(
                     current_time=0,  # relative time within segment
                     ayah_padding=0,  # we handle padding ourselves
                 )
+                if not first_translation:
+                    first_translation = ayah_data.get("translation", "")
             except Exception as e:
                 logger.error(f"Failed to fetch ayah {surah_num}:{ayah_num}: {e}")
                 continue
@@ -715,40 +747,100 @@ def generate_longform(
         raise RuntimeError(f"FFmpeg concat failed (exit code {result.returncode})")
 
     # Build metadata
+    # Fetch AI-generated metadata
+    ai_meta = {}
+    if first_translation:
+        try:
+            logger.info("Generating dynamic AI metadata for longform video...")
+            ai_meta = generate_longform_video_metadata(
+                surah_start=surah_start,
+                surah_end=surah_end,
+                reciter_name=reciter_name_en,
+                translation=first_translation
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate AI metadata for longform: {e}")
+
+    ai_title = ai_meta.get("title")
+    ai_reflection = ai_meta.get("reflection")
+    ai_tags = ai_meta.get("tags")
+
+    # Build description
     description = _build_description(
         surah_start, surah_end, reciter_name_ar, reciter_name_en,
-        chapters, accumulated_time, ayah_start, ayah_end
+        chapters, accumulated_time, ayah_start, ayah_end,
+        reflection=ai_reflection
     )
 
     title_suffix = f" | Repeated {loop_count}x" if loop_count > 1 else ""
-    if surah_start == surah_end:
-        name_ar = SURAH_NAMES_AR[surah_start - 1]
-        name_en = SURAH_NAMES_EN[surah_start - 1]
-        start_a = ayah_start or 1
-        end_a = ayah_end or VERSE_COUNTS[surah_start]
-        is_full = (start_a == 1 and end_a == VERSE_COUNTS[surah_start])
-        if is_full:
-            recommended_title = (
-                f"سورة {name_ar} كاملة{title_suffix} | {name_en} Full | "
-                f"{reciter_name_ar} | Beautiful Quran Recitation"
-            )
-        else:
-            recommended_title = (
-                f"سورة {name_ar} (الآيات {start_a}-{end_a}){title_suffix} | Surah {name_en} (Ayahs {start_a}-{end_a}) | "
-                f"{reciter_name_ar} | Beautiful Quran Recitation"
-            )
+    if ai_title:
+        recommended_title = ai_title
+        if loop_count > 1:
+            recommended_title = f"{recommended_title}{title_suffix}"
     else:
-        start_ar = SURAH_NAMES_AR[surah_start - 1]
-        end_ar = SURAH_NAMES_AR[surah_end - 1]
-        start_en = SURAH_NAMES_EN[surah_start - 1]
-        end_en = SURAH_NAMES_EN[surah_end - 1]
-        recommended_title = (
-            f"سورة {start_ar} إلى سورة {end_ar}{title_suffix} | "
-            f"{start_en} to {end_en} | {reciter_name_ar} | Beautiful Quran Recitation"
-        )
+        if surah_start == surah_end:
+            name_ar = SURAH_NAMES_AR[surah_start - 1]
+            name_en = SURAH_NAMES_EN[surah_start - 1]
+            start_a = ayah_start or 1
+            end_a = ayah_end or VERSE_COUNTS[surah_start]
+            is_full = (start_a == 1 and end_a == VERSE_COUNTS[surah_start])
+            if is_full:
+                recommended_title = (
+                    f"سورة {name_ar} كاملة{title_suffix} | {name_en} Full | "
+                    f"{reciter_name_ar} | Beautiful Quran Recitation"
+                )
+            else:
+                recommended_title = (
+                    f"سورة {name_ar} (الآيات {start_a}-{end_a}){title_suffix} | Surah {name_en} (Ayahs {start_a}-{end_a}) | "
+                    f"{reciter_name_ar} | Beautiful Quran Recitation"
+                )
+        else:
+            start_ar = SURAH_NAMES_AR[surah_start - 1]
+            end_ar = SURAH_NAMES_AR[surah_end - 1]
+            start_en = SURAH_NAMES_EN[surah_start - 1]
+            end_en = SURAH_NAMES_EN[surah_end - 1]
+            recommended_title = (
+                f"سورة {start_ar} إلى سورة {end_ar}{title_suffix} | "
+                f"{start_en} to {end_en} | {reciter_name_ar} | Beautiful Quran Recitation"
+            )
+
+    if ai_tags:
+        tags = ai_tags
+    else:
+        tags = _build_tags(surah_start, surah_end, reciter_name_ar, reciter_name_en)
+
+    # Generate thumbnail
+    thumbnail_path = final_output.with_suffix(".jpg")
+    thumbnail_generated = False
+    if thumbnail_bg_image_path and thumbnail_bg_image_path.exists():
+        try:
+            logger.info(f"Generating YouTube thumbnail: {thumbnail_path.name}")
+            # Keep first part of title (before pipe or emoji) to make it short and punchy
+            custom_title_en = None
+            if ai_title:
+                clean_title = ai_title.split("|")[0].split(" - ")[0].strip()
+                clean_title = re.sub(r'[^\w\s-]', '', clean_title).strip()
+                if 5 < len(clean_title) < 40:
+                    custom_title_en = clean_title
+
+            generate_longform_thumbnail(
+                surah_start=surah_start,
+                surah_end=surah_end,
+                reciter_name_ar=reciter_name_ar,
+                reciter_name_en=reciter_name_en,
+                bg_image_path=thumbnail_bg_image_path,
+                output_path=thumbnail_path,
+                custom_title_en=custom_title_en
+            )
+            thumbnail_generated = True
+        except Exception as e:
+            logger.error(f"Failed to generate thumbnail: {e}")
+    else:
+        logger.warning("No background image available for generating thumbnail.")
 
     metadata = {
         "output_path": str(final_output),
+        "thumbnail_path": str(thumbnail_path) if thumbnail_generated else None,
         "surah_start": surah_start,
         "surah_end": surah_end,
         "ayah_start": ayah_start,
@@ -761,7 +853,7 @@ def generate_longform(
         "chapters": chapters,
         "description": description,
         "recommended_title": recommended_title,
-        "tags": _build_tags(surah_start, surah_end, reciter_name_ar, reciter_name_en),
+        "tags": tags,
     }
 
     # Save metadata JSON
@@ -780,12 +872,21 @@ def generate_longform(
     except Exception:
         pass
 
+    # Clean up temporary thumbnail background image
+    if thumbnail_bg_image_path and thumbnail_bg_image_path.exists():
+        try:
+            os.remove(str(thumbnail_bg_image_path))
+            logger.info(f"Cleaned up temporary background image: {thumbnail_bg_image_path.name}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up temporary background image {thumbnail_bg_image_path}: {e}")
+
     logger.success(
         f"✅ Long-form video complete: {final_output.name} "
         f"({format_timestamp(accumulated_time)}, {len(processed_segments)} ayahs)"
     )
 
     return metadata
+
 
 
 def _build_description(
@@ -797,6 +898,7 @@ def _build_description(
     total_duration: float,
     ayah_start: Optional[int] = None,
     ayah_end: Optional[int] = None,
+    reflection: Optional[str] = None,
 ) -> str:
     """Build SEO-optimized YouTube description."""
     if surah_start == surah_end:
@@ -814,7 +916,11 @@ def _build_description(
         end_ar = SURAH_NAMES_AR[surah_end - 1]
         header = f"📖 سورة {start_ar} إلى سورة {end_ar} - Beautiful Quran Recitations"
 
-    lines = [
+    lines = []
+    if reflection:
+        lines.extend([reflection, ""])
+
+    lines.extend([
         header,
         f"🎙️ Reciter: {reciter_ar} ({reciter_en})",
         f"⏱️ Duration: {format_timestamp(total_duration)}",
@@ -822,7 +928,7 @@ def _build_description(
         "═══════════════════════════════",
         "📌 Timestamps / Chapters:",
         "═══════════════════════════════",
-    ]
+    ])
 
     for ch in chapters:
         lines.append(f"{ch['timestamp']} {ch['title']}")

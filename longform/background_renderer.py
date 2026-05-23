@@ -303,10 +303,8 @@ def get_ai_landscape_background(surah: int, start_ayah: int) -> Optional[Path]:
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        # Cleanup temp JPG
-        temp_jpg.unlink(missing_ok=True)
         logger.success(f"Generated landscape background video from AI image: {output_mp4.name}")
-        return output_mp4
+        return output_mp4, temp_jpg
     except Exception as e:
         logger.error(f"FFmpeg image to video conversion failed: {e}")
         if 'result' in locals() and result.stderr:
