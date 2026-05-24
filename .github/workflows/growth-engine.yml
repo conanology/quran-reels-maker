@@ -52,10 +52,13 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Restore YouTube credentials
+      - name: Restore YouTube and TikTok credentials
         run: |
           echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
           echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
+          if [ -n "${{ secrets.TIKTOK_TOKEN_JSON }}" ]; then
+            echo '${{ secrets.TIKTOK_TOKEN_JSON }}' > token_tiktok.json
+          fi
 
       - name: Ensure Amiri font exists
         run: |
@@ -86,6 +89,8 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           VIDEO_ENCODER: libx264  # Force CPU encoding on GitHub Actions runner
           IMAGEMAGICK_BINARY: /usr/bin/convert
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
         run: |
           FORCED_SLOT=""
           if [ -n "${{ github.event.inputs.slot }}" ]; then
@@ -102,7 +107,7 @@ jobs:
       - name: Commit progress & DB updates
         if: always()
         run: |
-          rm -f client_secrets.json token.json token.pickle
+          rm -f client_secrets.json token.json token.pickle token_tiktok.json
           
           # Clean large render folders
           rm -rf outputs/videos/*
@@ -117,6 +122,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add database/quran_reels.db
+          if [ -f database/background_usage_history.json ]; then
+            git add database/background_usage_history.json
+          fi
           if [ -f outputs/longform/background_usage.json ]; then
             git add outputs/longform/background_usage.json
           fi

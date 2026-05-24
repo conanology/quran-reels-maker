@@ -15,6 +15,11 @@ token.json
 token.pickle
 token.pickle.bak
 client_secrets.json
+cookies.txt
+tiktok_cookies.txt
+token_tiktok.json
+test_token_tiktok.json
+
 
 # Build outputs
 dist/
@@ -55,7 +60,16 @@ surah_112_data.json
 outputs/videos/*.mp4
 outputs/audio/*.mp3
 assets/downloaded_bg/*.mp4
+assets/downloaded_bg/ai_bg_*.jpg
+outputs/documentary/
+outputs/videos/preview_frames/
+assets/documentary/
 outputs/longform/downloads/
 outputs/longform/backgrounds/
 outputs/longform/output/
 outputs/longform/temp/
+
+# Subproject outputs
+quran_compiler/**/*.mp4
+quran_compiler/**/*.mp3
+

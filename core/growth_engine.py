@@ -528,6 +528,46 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
             )
             advance_progress(surah, act_end)
             
+            # === POST TO TIKTOK ===
+            from tiktok.uploader import is_configured, upload_to_tiktok, generate_tiktok_metadata
+            if is_configured():
+                logger.info("TikTok is configured. Uploading Short to TikTok...")
+                try:
+                    tiktok_meta = generate_tiktok_metadata(
+                        surah_name_ar=SURAH_NAMES_AR[surah - 1],
+                        surah_name_en=SURAH_NAMES_EN[surah - 1],
+                        surah_num=surah,
+                        start_ayah=act_start,
+                        end_ayah=act_end,
+                        reciter_name_ar=RECITERS.get(reciter_key, {}).get("name_ar", reciter_key)
+                    )
+                    tt_res = upload_to_tiktok(video_path, tiktok_meta)
+                    if tt_res and tt_res.get('status') == 'uploaded':
+                        logger.info(f"Successfully uploaded to TikTok! Publish ID: {tt_res.get('publish_id')}")
+                    else:
+                        logger.error(f"TikTok upload failed: {tt_res.get('error', 'Unknown error') if tt_res else 'No response'}")
+                except Exception as e:
+                    logger.exception(f"TikTok upload failed with exception: {e}")
+            else:
+                logger.info("TikTok not configured or authorized. Skipping automated TikTok upload.")
+                logger.info("==================================================")
+                logger.info("📢 MANUAL TIKTOK UPLOAD INFORMATION")
+                logger.info("==================================================")
+                logger.info(f"📁 Video File Location: {video_path}")
+                try:
+                    tiktok_meta = generate_tiktok_metadata(
+                        surah_name_ar=SURAH_NAMES_AR[surah - 1],
+                        surah_name_en=SURAH_NAMES_EN[surah - 1],
+                        surah_num=surah,
+                        start_ayah=act_start,
+                        end_ayah=act_end,
+                        reciter_name_ar=RECITERS.get(reciter_key, {}).get("name_ar", reciter_key)
+                    )
+                    logger.info(f"📝 Caption & Hashtags:\n\n{tiktok_meta['caption']}")
+                except Exception as e:
+                    logger.error(f"Failed to generate manual TikTok metadata: {e}")
+                logger.info("==================================================")
+            
         else:
             # Generate Longform (compilation, full surah, or sleep video)
             logger.info("Executing Long-form compilation pipeline...")

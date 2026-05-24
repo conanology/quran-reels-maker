@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Quran Shorts Compiler & Long-Form Video Generator</title>
+    <meta name="description" content="An automated system to compile YouTube Quran Shorts into high-quality, long-form 16:9 videos with blurred background, Arabic reciter overlays, and seamless transitions.">
+    
+    <!-- Google Fonts: Inter for UI, Amiri for Arabic text -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Link CSS stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-logo">
+            <span class="logo-icon">📖</span>
+            <h1>Quran Shorts Compiler</h1>
+        </div>
+        <div class="header-badge">
+            <span class="status-indicator-dot idle" id="global-status-dot"></span>
+            <span id="global-status-text">System Idle</span>
+        </div>
+    </header>
+
+    <main class="app-layout">
+        <!-- Sidebar Controls -->
+        <aside class="sidebar-panel">
+            <!-- Channel Input Card -->
+            <section class="control-card glass">
+                <h2>1. Import YouTube Shorts</h2>
+                <p class="card-desc">Enter your YouTube Channel handle or URL to fetch your recent Shorts.</p>
+                <div class="input-group">
+                    <label for="channel-input">Channel Handle or URL</label>
+                    <input type="text" id="channel-input" placeholder="@YourQuranChannel" value="@MyQuranChannel">
+                </div>
+                <button id="btn-fetch" class="btn-primary">
+                    <span class="btn-text">Fetch Shorts</span>
+                    <span class="spinner hidden" id="fetch-spinner"></span>
+                </button>
+                <div id="fetch-progress-msg" class="progress-message"></div>
+            </section>
+
+            <!-- Video Generation Settings -->
+            <section class="control-card glass">
+                <h2>2. Compilation Settings</h2>
+                <p class="card-desc">Configure the output format and specs for long-form video.</p>
+                
+                <div class="input-group">
+                    <label for="transition-input">Transition Duration (seconds)</label>
+                    <div class="slider-container">
+                        <input type="range" id="transition-input" min="1.0" max="5.0" step="0.5" value="3.0">
+                        <span id="transition-value">3.0s</span>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="filename-input">Output Filename</label>
+                    <input type="text" id="filename-input" placeholder="quran_compilation.mp4" value="quran_compilation.mp4">
+                </div>
+
+                <div class="stats-overview glass">
+                    <div class="stat-item">
+                        <span class="stat-label">Selected Clips</span>
+                        <span class="stat-val" id="selected-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Est. Duration</span>
+                        <span class="stat-val" id="est-duration">0m 0s</span>
+                    </div>
+                </div>
+
+                <button id="btn-compile" class="btn-accent" disabled>
+                    <span class="btn-text">Generate Long-Form Video</span>
+                </button>
+            </section>
+        </aside>
+
+        <!-- Main Workspace Area -->
+        <section class="workspace-panel">
+            <!-- Alert message for empty state -->
+            <div id="empty-state" class="empty-workspace glass">
+                <div class="empty-icon">📂</div>
+                <h3>No Shorts Imported</h3>
+                <p>Enter a YouTube channel handle in the sidebar and click "Fetch Shorts" to begin compiling.</p>
+            </div>
+
+            <!-- Dashboard workspace (hidden until shorts loaded) -->
+            <div id="workspace-content" class="workspace-content hidden">
+                <div class="workspace-header">
+                    <h2>Manage & Edit Compilation Order</h2>
+                    <div class="workspace-actions">
+                        <button id="btn-sort-quranic" class="btn-secondary">Sort Quranic Order</button>
+                        <button id="btn-select-all" class="btn-secondary">Select All</button>
+                        <button id="btn-deselect-all" class="btn-secondary">Deselect All</button>
+                    </div>
+                </div>
+
+                <!-- Draggable / Sortable Grid of Shorts -->
+                <div id="shorts-grid" class="shorts-grid">
+                    <!-- Dynamic cards will be rendered here by JS -->
+                </div>
+            </div>
+
+            <!-- Processing / Progress Panel (Hidden until compilation starts) -->
+            <div id="progress-panel" class="progress-panel glass hidden">
+                <div class="progress-header">
+                    <h3 id="progress-title">Compiling Video...</h3>
+                    <span class="progress-percent" id="progress-percent">0%</span>
+                </div>
+                
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                </div>
+
+                <p id="progress-status-text" class="progress-status-text">Initializing compilation engine...</p>
+
+                <div class="console-log-container">
+                    <div class="console-log-header">Compilation Console Log</div>
+                    <pre id="console-logs" class="console-logs">Waiting for task...</pre>
+                </div>
+            </div>
+
+            <!-- Output & Results Section (Hidden until compilation finishes) -->
+            <div id="output-panel" class="output-panel glass hidden">
+                <h2>🎉 Long-Form Video Ready!</h2>
+                <p class="panel-desc">Your video has been successfully compiled and optimized.</p>
+
+                <div class="output-grid">
+                    <!-- Left: Video Player -->
+                    <div class="video-preview-card glass">
+                        <h3>Video Preview</h3>
+                        <video id="output-video-player" controls width="100%">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="output-file-details">
+                            <span class="detail-label">File Path:</span>
+                            <code id="output-file-path">/data/output/quran_compilation.mp4</code>
+                        </div>
+                    </div>
+
+                    <!-- Right: Metadata & SEO -->
+                    <div class="metadata-seo-card glass">
+                        <h3>YouTube SEO Metadata</h3>
+                        
+                        <div class="input-group">
+                            <label for="output-title">Recommended Video Title</label>
+                            <input type="text" id="output-title" readonly>
+                            <button class="btn-copy" onclick="copyToClipboard('output-title')">Copy Title</button>
+                        </div>
+
+                        <div class="input-group">
+                            <label for="output-description">Optimized Description & Chapters</label>
+                            <textarea id="output-description" rows="12" readonly></textarea>
+                            <button class="btn-copy" onclick="copyToClipboard('output-description')">Copy Description</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>Built with Antigravity AI Code Companion | Tech Stack: HTML5, CSS3, JavaScript, FastAPI, yt-dlp, FFmpeg</p>
+    </footer>
+
+    <!-- Link JS Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>

@@ -35,6 +35,12 @@ DATABASE_PATH = DATABASE_DIR / "quran_reels.db"
 YOUTUBE_CLIENT_SECRETS = BASE_DIR / "client_secrets.json"
 YOUTUBE_TOKEN_PATH = BASE_DIR / "token.pickle"
 
+# TikTok credentials
+TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+TIKTOK_TOKEN_PATH = BASE_DIR / "token_tiktok.json"
+TIKTOK_REDIRECT_URI = os.getenv("TIKTOK_REDIRECT_URI", "https://localhost:8080/")
+
 # Create directories if they don't exist
 for directory in [FONTS_DIR, BACKGROUNDS_DIR, VIDEOS_DIR, AUDIO_DIR, DATABASE_DIR]:
     directory.mkdir(parents=True, exist_ok=True)

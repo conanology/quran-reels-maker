@@ -325,6 +325,63 @@ def cmd_auto(args):
         # Notify on Telegram
         if telegram_configured():
             notify_upload_success(result['url'])
+            
+        # === UPLOAD TO TIKTOK ===
+        from tiktok.uploader import is_configured, upload_to_tiktok, generate_tiktok_metadata
+        if is_configured():
+            print("\n📤 Uploading to TikTok...")
+            from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN, RECITERS
+            
+            surah_num = gen_result['surah']
+            surah_name_ar = SURAH_NAMES_AR[surah_num - 1]
+            surah_name_en = SURAH_NAMES_EN[surah_num - 1]
+            reciter = gen_result['reciter']
+            reciter_name_ar = RECITERS.get(reciter, {}).get("name_ar", reciter)
+            
+            tiktok_meta = generate_tiktok_metadata(
+                surah_name_ar=surah_name_ar,
+                surah_name_en=surah_name_en,
+                surah_num=surah_num,
+                start_ayah=gen_result['start_ayah'],
+                end_ayah=gen_result['end_ayah'],
+                reciter_name_ar=reciter_name_ar
+            )
+            
+            try:
+                tt_res = upload_to_tiktok(Path(gen_result['video_path']), tiktok_meta)
+                if tt_res and tt_res.get('status') == 'uploaded':
+                    print(f"✅ Successfully uploaded to TikTok! Publish ID: {tt_res.get('publish_id')}")
+                else:
+                    print(f"⚠️ TikTok upload failed: {tt_res.get('error', 'Unknown error') if tt_res else 'No response'}")
+            except Exception as e:
+                logger.error(f"TikTok upload failed with exception: {e}")
+                print(f"⚠️ TikTok upload failed: {e}")
+        else:
+            print("\nℹ️ TikTok not configured or authorized. Skipping automated TikTok upload.")
+            print("="*60)
+            print("📢 MANUAL TIKTOK UPLOAD INFORMATION")
+            print("="*60)
+            print(f"📁 Video File Location: {gen_result['video_path']}")
+            try:
+                from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN, RECITERS
+                surah_num = gen_result['surah']
+                surah_name_ar = SURAH_NAMES_AR[surah_num - 1]
+                surah_name_en = SURAH_NAMES_EN[surah_num - 1]
+                reciter = gen_result['reciter']
+                reciter_name_ar = RECITERS.get(reciter, {}).get("name_ar", reciter)
+                
+                tiktok_meta = generate_tiktok_metadata(
+                    surah_name_ar=surah_name_ar,
+                    surah_name_en=surah_name_en,
+                    surah_num=surah_num,
+                    start_ayah=gen_result['start_ayah'],
+                    end_ayah=gen_result['end_ayah'],
+                    reciter_name_ar=reciter_name_ar
+                )
+                print(f"📝 Caption & Hashtags:\n\n{tiktok_meta['caption']}")
+            except Exception as e:
+                print(f"⚠️ Failed to generate TikTok caption: {e}")
+            print("="*60)
         
         return result
         
@@ -574,6 +631,21 @@ Then run this command again.
         print("You can now use 'python main.py auto' for automated uploads.")
         return True
         
+    except Exception as e:
+        print(f"\n❌ Authentication failed: {e}")
+        return False
+
+
+def cmd_setup_tiktok(args):
+    """Set up TikTok authentication."""
+    from tiktok.auth import authenticate_interactive
+    print("\n" + "="*50)
+    print("🎵 TIKTOK AUTHENTICATION SETUP")
+    print("="*50)
+    try:
+        authenticate_interactive()
+        print("\n✅ TikTok authentication complete!")
+        return True
     except Exception as e:
         print(f"\n❌ Authentication failed: {e}")
         return False
@@ -1026,6 +1098,9 @@ Examples:
     setup_parser = subparsers.add_parser('setup-youtube', help='Set up YouTube authentication')
     setup_parser.add_argument('--test', action='store_true', help='Test authentication after setup')
     
+    # Setup TikTok command
+    setup_tt_parser = subparsers.add_parser('setup-tiktok', help='Set up TikTok authentication')
+    
     # History command
     history_parser = subparsers.add_parser('history', help='Show reel history')
     history_parser.add_argument('--limit', type=int, default=10, help='Number of records to show')
@@ -1118,6 +1193,7 @@ Examples:
         'batch': cmd_batch,
         'status': cmd_status,
         'setup-youtube': cmd_setup_youtube,
+        'setup-tiktok': cmd_setup_tiktok,
         'history': cmd_history,
         'set-position': cmd_set_position,
         'tiktok': cmd_tiktok,

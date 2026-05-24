@@ -2001,5 +2001,2322 @@
       "transliteration": "l-khāshiʿīna",
       "position": 8
     }
-  ]
+  ],
+  "audio_v4:7:1:1": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001001.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:2": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001002.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:3": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001003.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:4": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001004.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:5": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001005.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:6": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001006.mp3",
+    "segments": []
+  },
+  "audio_v4:7:1:7": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/001007.mp3",
+    "segments": []
+  },
+  "words:1:1": [
+    {
+      "text": "بِسْمِ",
+      "transliteration": "bis'mi",
+      "position": 1
+    },
+    {
+      "text": "ٱللَّهِ",
+      "transliteration": "l-lahi",
+      "position": 2
+    },
+    {
+      "text": "ٱلرَّحْمَـٰنِ",
+      "transliteration": "l-raḥmāni",
+      "position": 3
+    },
+    {
+      "text": "ٱلرَّحِيمِ",
+      "transliteration": "l-raḥīmi",
+      "position": 4
+    }
+  ],
+  "words:1:2": [
+    {
+      "text": "ٱلْحَمْدُ",
+      "transliteration": "al-ḥamdu",
+      "position": 1
+    },
+    {
+      "text": "لِلَّهِ",
+      "transliteration": "lillahi",
+      "position": 2
+    },
+    {
+      "text": "رَبِّ",
+      "transliteration": "rabbi",
+      "position": 3
+    },
+    {
+      "text": "ٱلْعَـٰلَمِينَ",
+      "transliteration": "l-ʿālamīna",
+      "position": 4
+    }
+  ],
+  "words:1:3": [
+    {
+      "text": "ٱلرَّحْمَـٰنِ",
+      "transliteration": "al-raḥmāni",
+      "position": 1
+    },
+    {
+      "text": "ٱلرَّحِيمِ",
+      "transliteration": "l-raḥīmi",
+      "position": 2
+    }
+  ],
+  "words:1:4": [
+    {
+      "text": "مَـٰلِكِ",
+      "transliteration": "māliki",
+      "position": 1
+    },
+    {
+      "text": "يَوْمِ",
+      "transliteration": "yawmi",
+      "position": 2
+    },
+    {
+      "text": "ٱلدِّينِ",
+      "transliteration": "l-dīni",
+      "position": 3
+    }
+  ],
+  "words:1:5": [
+    {
+      "text": "إِيَّاكَ",
+      "transliteration": "iyyāka",
+      "position": 1
+    },
+    {
+      "text": "نَعْبُدُ",
+      "transliteration": "naʿbudu",
+      "position": 2
+    },
+    {
+      "text": "وَإِيَّاكَ",
+      "transliteration": "wa-iyyāka",
+      "position": 3
+    },
+    {
+      "text": "نَسْتَعِينُ",
+      "transliteration": "nastaʿīnu",
+      "position": 4
+    }
+  ],
+  "words:1:6": [
+    {
+      "text": "ٱهْدِنَا",
+      "transliteration": "ih'dinā",
+      "position": 1
+    },
+    {
+      "text": "ٱلصِّرَٰطَ",
+      "transliteration": "l-ṣirāṭa",
+      "position": 2
+    },
+    {
+      "text": "ٱلْمُسْتَقِيمَ",
+      "transliteration": "l-mus'taqīma",
+      "position": 3
+    }
+  ],
+  "words:1:7": [
+    {
+      "text": "صِرَٰطَ",
+      "transliteration": "ṣirāṭa",
+      "position": 1
+    },
+    {
+      "text": "ٱلَّذِينَ",
+      "transliteration": "alladhīna",
+      "position": 2
+    },
+    {
+      "text": "أَنْعَمْتَ",
+      "transliteration": "anʿamta",
+      "position": 3
+    },
+    {
+      "text": "عَلَيْهِمْ",
+      "transliteration": "ʿalayhim",
+      "position": 4
+    },
+    {
+      "text": "غَيْرِ",
+      "transliteration": "ghayri",
+      "position": 5
+    },
+    {
+      "text": "ٱلْمَغْضُوبِ",
+      "transliteration": "l-maghḍūbi",
+      "position": 6
+    },
+    {
+      "text": "عَلَيْهِمْ",
+      "transliteration": "ʿalayhim",
+      "position": 7
+    },
+    {
+      "text": "وَلَا",
+      "transliteration": "walā",
+      "position": 8
+    },
+    {
+      "text": "ٱلضَّآلِّينَ",
+      "transliteration": "l-ḍālīna",
+      "position": 9
+    }
+  ],
+  "audio_v4:7:113:1": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/113001.mp3",
+    "segments": []
+  },
+  "audio_v4:7:113:2": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/113002.mp3",
+    "segments": []
+  },
+  "audio_v4:7:113:3": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/113003.mp3",
+    "segments": []
+  },
+  "audio_v4:7:113:4": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/113004.mp3",
+    "segments": []
+  },
+  "audio_v4:7:113:5": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/113005.mp3",
+    "segments": []
+  },
+  "words:113:1": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "أَعُوذُ",
+      "transliteration": "aʿūdhu",
+      "position": 2
+    },
+    {
+      "text": "بِرَبِّ",
+      "transliteration": "birabbi",
+      "position": 3
+    },
+    {
+      "text": "ٱلْفَلَقِ",
+      "transliteration": "l-falaqi",
+      "position": 4
+    }
+  ],
+  "words:113:2": [
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 1
+    },
+    {
+      "text": "شَرِّ",
+      "transliteration": "sharri",
+      "position": 2
+    },
+    {
+      "text": "مَا",
+      "transliteration": "mā",
+      "position": 3
+    },
+    {
+      "text": "خَلَقَ",
+      "transliteration": "khalaqa",
+      "position": 4
+    }
+  ],
+  "words:113:3": [
+    {
+      "text": "وَمِن",
+      "transliteration": "wamin",
+      "position": 1
+    },
+    {
+      "text": "شَرِّ",
+      "transliteration": "sharri",
+      "position": 2
+    },
+    {
+      "text": "غَاسِقٍ",
+      "transliteration": "ghāsiqin",
+      "position": 3
+    },
+    {
+      "text": "إِذَا",
+      "transliteration": "idhā",
+      "position": 4
+    },
+    {
+      "text": "وَقَبَ",
+      "transliteration": "waqaba",
+      "position": 5
+    }
+  ],
+  "words:113:4": [
+    {
+      "text": "وَمِن",
+      "transliteration": "wamin",
+      "position": 1
+    },
+    {
+      "text": "شَرِّ",
+      "transliteration": "sharri",
+      "position": 2
+    },
+    {
+      "text": "ٱلنَّفَّـٰثَـٰتِ",
+      "transliteration": "l-nafāthāti",
+      "position": 3
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 4
+    },
+    {
+      "text": "ٱلْعُقَدِ",
+      "transliteration": "l-ʿuqadi",
+      "position": 5
+    }
+  ],
+  "words:113:5": [
+    {
+      "text": "وَمِن",
+      "transliteration": "wamin",
+      "position": 1
+    },
+    {
+      "text": "شَرِّ",
+      "transliteration": "sharri",
+      "position": 2
+    },
+    {
+      "text": "حَاسِدٍ",
+      "transliteration": "ḥāsidin",
+      "position": 3
+    },
+    {
+      "text": "إِذَا",
+      "transliteration": "idhā",
+      "position": 4
+    },
+    {
+      "text": "حَسَدَ",
+      "transliteration": "ḥasada",
+      "position": 5
+    }
+  ],
+  "audio_v4:7:114:1": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114001.mp3",
+    "segments": []
+  },
+  "audio_v4:7:114:2": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114002.mp3",
+    "segments": []
+  },
+  "audio_v4:7:114:3": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114003.mp3",
+    "segments": []
+  },
+  "audio_v4:7:114:4": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114004.mp3",
+    "segments": []
+  },
+  "audio_v4:7:114:5": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114005.mp3",
+    "segments": []
+  },
+  "audio_v4:7:114:6": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/114006.mp3",
+    "segments": []
+  },
+  "words:114:1": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "أَعُوذُ",
+      "transliteration": "aʿūdhu",
+      "position": 2
+    },
+    {
+      "text": "بِرَبِّ",
+      "transliteration": "birabbi",
+      "position": 3
+    },
+    {
+      "text": "ٱلنَّاسِ",
+      "transliteration": "l-nāsi",
+      "position": 4
+    }
+  ],
+  "words:114:2": [
+    {
+      "text": "مَلِكِ",
+      "transliteration": "maliki",
+      "position": 1
+    },
+    {
+      "text": "ٱلنَّاسِ",
+      "transliteration": "l-nāsi",
+      "position": 2
+    }
+  ],
+  "words:114:3": [
+    {
+      "text": "إِلَـٰهِ",
+      "transliteration": "ilāhi",
+      "position": 1
+    },
+    {
+      "text": "ٱلنَّاسِ",
+      "transliteration": "l-nāsi",
+      "position": 2
+    }
+  ],
+  "words:114:4": [
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 1
+    },
+    {
+      "text": "شَرِّ",
+      "transliteration": "sharri",
+      "position": 2
+    },
+    {
+      "text": "ٱلْوَسْوَاسِ",
+      "transliteration": "l-waswāsi",
+      "position": 3
+    },
+    {
+      "text": "ٱلْخَنَّاسِ",
+      "transliteration": "l-khanāsi",
+      "position": 4
+    }
+  ],
+  "words:114:5": [
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 1
+    },
+    {
+      "text": "يُوَسْوِسُ",
+      "transliteration": "yuwaswisu",
+      "position": 2
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 3
+    },
+    {
+      "text": "صُدُورِ",
+      "transliteration": "ṣudūri",
+      "position": 4
+    },
+    {
+      "text": "ٱلنَّاسِ",
+      "transliteration": "l-nāsi",
+      "position": 5
+    }
+  ],
+  "words:114:6": [
+    {
+      "text": "مِنَ",
+      "transliteration": "mina",
+      "position": 1
+    },
+    {
+      "text": "ٱلْجِنَّةِ",
+      "transliteration": "l-jinati",
+      "position": 2
+    },
+    {
+      "text": "وَٱلنَّاسِ",
+      "transliteration": "wal-nāsi",
+      "position": 3
+    }
+  ],
+  "audio_v4:7:108:1": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/108001.mp3",
+    "segments": []
+  },
+  "audio_v4:7:108:2": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/108002.mp3",
+    "segments": []
+  },
+  "audio_v4:7:108:3": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/108003.mp3",
+    "segments": []
+  },
+  "words:108:1": [
+    {
+      "text": "إِنَّآ",
+      "transliteration": "innā",
+      "position": 1
+    },
+    {
+      "text": "أَعْطَيْنَـٰكَ",
+      "transliteration": "aʿṭaynāka",
+      "position": 2
+    },
+    {
+      "text": "ٱلْكَوْثَرَ",
+      "transliteration": "l-kawthara",
+      "position": 3
+    }
+  ],
+  "words:108:2": [
+    {
+      "text": "فَصَلِّ",
+      "transliteration": "faṣalli",
+      "position": 1
+    },
+    {
+      "text": "لِرَبِّكَ",
+      "transliteration": "lirabbika",
+      "position": 2
+    },
+    {
+      "text": "وَٱنْحَرْ",
+      "transliteration": "wa-in'ḥar",
+      "position": 3
+    }
+  ],
+  "words:108:3": [
+    {
+      "text": "إِنَّ",
+      "transliteration": "inna",
+      "position": 1
+    },
+    {
+      "text": "شَانِئَكَ",
+      "transliteration": "shāni-aka",
+      "position": 2
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 3
+    },
+    {
+      "text": "ٱلْأَبْتَرُ",
+      "transliteration": "l-abtaru",
+      "position": 4
+    }
+  ],
+  "audio_v4:7:67:1": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067001.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:2": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067002.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:3": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067003.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:4": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067004.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:5": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067005.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:6": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067006.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:7": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067007.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:8": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067008.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:9": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067009.mp3",
+    "segments": []
+  },
+  "audio_v4:7:67:10": {
+    "audio_url": "https://verses.quran.com/Alafasy/mp3/067010.mp3",
+    "segments": []
+  },
+  "words:67:1": [
+    {
+      "text": "تَبَـٰرَكَ",
+      "transliteration": "tabāraka",
+      "position": 1
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 2
+    },
+    {
+      "text": "بِيَدِهِ",
+      "transliteration": "biyadihi",
+      "position": 3
+    },
+    {
+      "text": "ٱلْمُلْكُ",
+      "transliteration": "l-mul'ku",
+      "position": 4
+    },
+    {
+      "text": "وَهُوَ",
+      "transliteration": "wahuwa",
+      "position": 5
+    },
+    {
+      "text": "عَلَىٰ",
+      "transliteration": "ʿalā",
+      "position": 6
+    },
+    {
+      "text": "كُلِّ",
+      "transliteration": "kulli",
+      "position": 7
+    },
+    {
+      "text": "شَىْءٍۢ",
+      "transliteration": "shayin",
+      "position": 8
+    },
+    {
+      "text": "قَدِيرٌ",
+      "transliteration": "qadīrun",
+      "position": 9
+    }
+  ],
+  "words:67:2": [
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 1
+    },
+    {
+      "text": "خَلَقَ",
+      "transliteration": "khalaqa",
+      "position": 2
+    },
+    {
+      "text": "ٱلْمَوْتَ",
+      "transliteration": "l-mawta",
+      "position": 3
+    },
+    {
+      "text": "وَٱلْحَيَوٰةَ",
+      "transliteration": "wal-ḥayata",
+      "position": 4
+    },
+    {
+      "text": "لِيَبْلُوَكُمْ",
+      "transliteration": "liyabluwakum",
+      "position": 5
+    },
+    {
+      "text": "أَيُّكُمْ",
+      "transliteration": "ayyukum",
+      "position": 6
+    },
+    {
+      "text": "أَحْسَنُ",
+      "transliteration": "aḥsanu",
+      "position": 7
+    },
+    {
+      "text": "عَمَلًۭا ۚ",
+      "transliteration": "ʿamalan",
+      "position": 8
+    },
+    {
+      "text": "وَهُوَ",
+      "transliteration": "wahuwa",
+      "position": 9
+    },
+    {
+      "text": "ٱلْعَزِيزُ",
+      "transliteration": "l-ʿazīzu",
+      "position": 10
+    },
+    {
+      "text": "ٱلْغَفُورُ",
+      "transliteration": "l-ghafūru",
+      "position": 11
+    }
+  ],
+  "words:67:3": [
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 1
+    },
+    {
+      "text": "خَلَقَ",
+      "transliteration": "khalaqa",
+      "position": 2
+    },
+    {
+      "text": "سَبْعَ",
+      "transliteration": "sabʿa",
+      "position": 3
+    },
+    {
+      "text": "سَمَـٰوَٰتٍۢ",
+      "transliteration": "samāwātin",
+      "position": 4
+    },
+    {
+      "text": "طِبَاقًۭا ۖ",
+      "transliteration": "ṭibāqan",
+      "position": 5
+    },
+    {
+      "text": "مَّا",
+      "transliteration": "mā",
+      "position": 6
+    },
+    {
+      "text": "تَرَىٰ",
+      "transliteration": "tarā",
+      "position": 7
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 8
+    },
+    {
+      "text": "خَلْقِ",
+      "transliteration": "khalqi",
+      "position": 9
+    },
+    {
+      "text": "ٱلرَّحْمَـٰنِ",
+      "transliteration": "l-raḥmāni",
+      "position": 10
+    },
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 11
+    },
+    {
+      "text": "تَفَـٰوُتٍۢ ۖ",
+      "transliteration": "tafāwutin",
+      "position": 12
+    },
+    {
+      "text": "فَٱرْجِعِ",
+      "transliteration": "fa-ir'jiʿi",
+      "position": 13
+    },
+    {
+      "text": "ٱلْبَصَرَ",
+      "transliteration": "l-baṣara",
+      "position": 14
+    },
+    {
+      "text": "هَلْ",
+      "transliteration": "hal",
+      "position": 15
+    },
+    {
+      "text": "تَرَىٰ",
+      "transliteration": "tarā",
+      "position": 16
+    },
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 17
+    },
+    {
+      "text": "فُطُورٍۢ",
+      "transliteration": "fuṭūrin",
+      "position": 18
+    }
+  ],
+  "words:67:4": [
+    {
+      "text": "ثُمَّ",
+      "transliteration": "thumma",
+      "position": 1
+    },
+    {
+      "text": "ٱرْجِعِ",
+      "transliteration": "ir'jiʿi",
+      "position": 2
+    },
+    {
+      "text": "ٱلْبَصَرَ",
+      "transliteration": "l-baṣara",
+      "position": 3
+    },
+    {
+      "text": "كَرَّتَيْنِ",
+      "transliteration": "karratayni",
+      "position": 4
+    },
+    {
+      "text": "يَنقَلِبْ",
+      "transliteration": "yanqalib",
+      "position": 5
+    },
+    {
+      "text": "إِلَيْكَ",
+      "transliteration": "ilayka",
+      "position": 6
+    },
+    {
+      "text": "ٱلْبَصَرُ",
+      "transliteration": "l-baṣaru",
+      "position": 7
+    },
+    {
+      "text": "خَاسِئًۭا",
+      "transliteration": "khāsi-an",
+      "position": 8
+    },
+    {
+      "text": "وَهُوَ",
+      "transliteration": "wahuwa",
+      "position": 9
+    },
+    {
+      "text": "حَسِيرٌۭ",
+      "transliteration": "ḥasīrun",
+      "position": 10
+    }
+  ],
+  "words:67:5": [
+    {
+      "text": "وَلَقَدْ",
+      "transliteration": "walaqad",
+      "position": 1
+    },
+    {
+      "text": "زَيَّنَّا",
+      "transliteration": "zayyannā",
+      "position": 2
+    },
+    {
+      "text": "ٱلسَّمَآءَ",
+      "transliteration": "l-samāa",
+      "position": 3
+    },
+    {
+      "text": "ٱلدُّنْيَا",
+      "transliteration": "l-dun'yā",
+      "position": 4
+    },
+    {
+      "text": "بِمَصَـٰبِيحَ",
+      "transliteration": "bimaṣābīḥa",
+      "position": 5
+    },
+    {
+      "text": "وَجَعَلْنَـٰهَا",
+      "transliteration": "wajaʿalnāhā",
+      "position": 6
+    },
+    {
+      "text": "رُجُومًۭا",
+      "transliteration": "rujūman",
+      "position": 7
+    },
+    {
+      "text": "لِّلشَّيَـٰطِينِ ۖ",
+      "transliteration": "lilshayāṭīni",
+      "position": 8
+    },
+    {
+      "text": "وَأَعْتَدْنَا",
+      "transliteration": "wa-aʿtadnā",
+      "position": 9
+    },
+    {
+      "text": "لَهُمْ",
+      "transliteration": "lahum",
+      "position": 10
+    },
+    {
+      "text": "عَذَابَ",
+      "transliteration": "ʿadhāba",
+      "position": 11
+    },
+    {
+      "text": "ٱلسَّعِيرِ",
+      "transliteration": "l-saʿīri",
+      "position": 12
+    }
+  ],
+  "words:67:6": [
+    {
+      "text": "وَلِلَّذِينَ",
+      "transliteration": "walilladhīna",
+      "position": 1
+    },
+    {
+      "text": "كَفَرُوا۟",
+      "transliteration": "kafarū",
+      "position": 2
+    },
+    {
+      "text": "بِرَبِّهِمْ",
+      "transliteration": "birabbihim",
+      "position": 3
+    },
+    {
+      "text": "عَذَابُ",
+      "transliteration": "ʿadhābu",
+      "position": 4
+    },
+    {
+      "text": "جَهَنَّمَ ۖ",
+      "transliteration": "jahannama",
+      "position": 5
+    },
+    {
+      "text": "وَبِئْسَ",
+      "transliteration": "wabi'sa",
+      "position": 6
+    },
+    {
+      "text": "ٱلْمَصِيرُ",
+      "transliteration": "l-maṣīru",
+      "position": 7
+    }
+  ],
+  "words:67:7": [
+    {
+      "text": "إِذَآ",
+      "transliteration": "idhā",
+      "position": 1
+    },
+    {
+      "text": "أُلْقُوا۟",
+      "transliteration": "ul'qū",
+      "position": 2
+    },
+    {
+      "text": "فِيهَا",
+      "transliteration": "fīhā",
+      "position": 3
+    },
+    {
+      "text": "سَمِعُوا۟",
+      "transliteration": "samiʿū",
+      "position": 4
+    },
+    {
+      "text": "لَهَا",
+      "transliteration": "lahā",
+      "position": 5
+    },
+    {
+      "text": "شَهِيقًۭا",
+      "transliteration": "shahīqan",
+      "position": 6
+    },
+    {
+      "text": "وَهِىَ",
+      "transliteration": "wahiya",
+      "position": 7
+    },
+    {
+      "text": "تَفُورُ",
+      "transliteration": "tafūru",
+      "position": 8
+    }
+  ],
+  "words:67:8": [
+    {
+      "text": "تَكَادُ",
+      "transliteration": "takādu",
+      "position": 1
+    },
+    {
+      "text": "تَمَيَّزُ",
+      "transliteration": "tamayyazu",
+      "position": 2
+    },
+    {
+      "text": "مِنَ",
+      "transliteration": "mina",
+      "position": 3
+    },
+    {
+      "text": "ٱلْغَيْظِ ۖ",
+      "transliteration": "l-ghayẓi",
+      "position": 4
+    },
+    {
+      "text": "كُلَّمَآ",
+      "transliteration": "kullamā",
+      "position": 5
+    },
+    {
+      "text": "أُلْقِىَ",
+      "transliteration": "ul'qiya",
+      "position": 6
+    },
+    {
+      "text": "فِيهَا",
+      "transliteration": "fīhā",
+      "position": 7
+    },
+    {
+      "text": "فَوْجٌۭ",
+      "transliteration": "fawjun",
+      "position": 8
+    },
+    {
+      "text": "سَأَلَهُمْ",
+      "transliteration": "sa-alahum",
+      "position": 9
+    },
+    {
+      "text": "خَزَنَتُهَآ",
+      "transliteration": "khazanatuhā",
+      "position": 10
+    },
+    {
+      "text": "أَلَمْ",
+      "transliteration": "alam",
+      "position": 11
+    },
+    {
+      "text": "يَأْتِكُمْ",
+      "transliteration": "yatikum",
+      "position": 12
+    },
+    {
+      "text": "نَذِيرٌۭ",
+      "transliteration": "nadhīrun",
+      "position": 13
+    }
+  ],
+  "words:67:9": [
+    {
+      "text": "قَالُوا۟",
+      "transliteration": "qālū",
+      "position": 1
+    },
+    {
+      "text": "بَلَىٰ",
+      "transliteration": "balā",
+      "position": 2
+    },
+    {
+      "text": "قَدْ",
+      "transliteration": "qad",
+      "position": 3
+    },
+    {
+      "text": "جَآءَنَا",
+      "transliteration": "jāanā",
+      "position": 4
+    },
+    {
+      "text": "نَذِيرٌۭ",
+      "transliteration": "nadhīrun",
+      "position": 5
+    },
+    {
+      "text": "فَكَذَّبْنَا",
+      "transliteration": "fakadhabnā",
+      "position": 6
+    },
+    {
+      "text": "وَقُلْنَا",
+      "transliteration": "waqul'nā",
+      "position": 7
+    },
+    {
+      "text": "مَا",
+      "transliteration": "mā",
+      "position": 8
+    },
+    {
+      "text": "نَزَّلَ",
+      "transliteration": "nazzala",
+      "position": 9
+    },
+    {
+      "text": "ٱللَّهُ",
+      "transliteration": "l-lahu",
+      "position": 10
+    },
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 11
+    },
+    {
+      "text": "شَىْءٍ",
+      "transliteration": "shayin",
+      "position": 12
+    },
+    {
+      "text": "إِنْ",
+      "transliteration": "in",
+      "position": 13
+    },
+    {
+      "text": "أَنتُمْ",
+      "transliteration": "antum",
+      "position": 14
+    },
+    {
+      "text": "إِلَّا",
+      "transliteration": "illā",
+      "position": 15
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 16
+    },
+    {
+      "text": "ضَلَـٰلٍۢ",
+      "transliteration": "ḍalālin",
+      "position": 17
+    },
+    {
+      "text": "كَبِيرٍۢ",
+      "transliteration": "kabīrin",
+      "position": 18
+    }
+  ],
+  "words:67:10": [
+    {
+      "text": "وَقَالُوا۟",
+      "transliteration": "waqālū",
+      "position": 1
+    },
+    {
+      "text": "لَوْ",
+      "transliteration": "law",
+      "position": 2
+    },
+    {
+      "text": "كُنَّا",
+      "transliteration": "kunnā",
+      "position": 3
+    },
+    {
+      "text": "نَسْمَعُ",
+      "transliteration": "nasmaʿu",
+      "position": 4
+    },
+    {
+      "text": "أَوْ",
+      "transliteration": "aw",
+      "position": 5
+    },
+    {
+      "text": "نَعْقِلُ",
+      "transliteration": "naʿqilu",
+      "position": 6
+    },
+    {
+      "text": "مَا",
+      "transliteration": "mā",
+      "position": 7
+    },
+    {
+      "text": "كُنَّا",
+      "transliteration": "kunnā",
+      "position": 8
+    },
+    {
+      "text": "فِىٓ",
+      "transliteration": "fī",
+      "position": 9
+    },
+    {
+      "text": "أَصْحَـٰبِ",
+      "transliteration": "aṣḥābi",
+      "position": 10
+    },
+    {
+      "text": "ٱلسَّعِيرِ",
+      "transliteration": "l-saʿīri",
+      "position": 11
+    }
+  ],
+  "words:67:11": [
+    {
+      "text": "فَٱعْتَرَفُوا۟",
+      "transliteration": "fa-iʿ'tarafū",
+      "position": 1
+    },
+    {
+      "text": "بِذَنۢبِهِمْ",
+      "transliteration": "bidhanbihim",
+      "position": 2
+    },
+    {
+      "text": "فَسُحْقًۭا",
+      "transliteration": "fasuḥ'qan",
+      "position": 3
+    },
+    {
+      "text": "لِّأَصْحَـٰبِ",
+      "transliteration": "li-aṣḥābi",
+      "position": 4
+    },
+    {
+      "text": "ٱلسَّعِيرِ",
+      "transliteration": "l-saʿīri",
+      "position": 5
+    }
+  ],
+  "words:67:12": [
+    {
+      "text": "إِنَّ",
+      "transliteration": "inna",
+      "position": 1
+    },
+    {
+      "text": "ٱلَّذِينَ",
+      "transliteration": "alladhīna",
+      "position": 2
+    },
+    {
+      "text": "يَخْشَوْنَ",
+      "transliteration": "yakhshawna",
+      "position": 3
+    },
+    {
+      "text": "رَبَّهُم",
+      "transliteration": "rabbahum",
+      "position": 4
+    },
+    {
+      "text": "بِٱلْغَيْبِ",
+      "transliteration": "bil-ghaybi",
+      "position": 5
+    },
+    {
+      "text": "لَهُم",
+      "transliteration": "lahum",
+      "position": 6
+    },
+    {
+      "text": "مَّغْفِرَةٌۭ",
+      "transliteration": "maghfiratun",
+      "position": 7
+    },
+    {
+      "text": "وَأَجْرٌۭ",
+      "transliteration": "wa-ajrun",
+      "position": 8
+    },
+    {
+      "text": "كَبِيرٌۭ",
+      "transliteration": "kabīrun",
+      "position": 9
+    }
+  ],
+  "words:67:13": [
+    {
+      "text": "وَأَسِرُّوا۟",
+      "transliteration": "wa-asirrū",
+      "position": 1
+    },
+    {
+      "text": "قَوْلَكُمْ",
+      "transliteration": "qawlakum",
+      "position": 2
+    },
+    {
+      "text": "أَوِ",
+      "transliteration": "awi",
+      "position": 3
+    },
+    {
+      "text": "ٱجْهَرُوا۟",
+      "transliteration": "ij'harū",
+      "position": 4
+    },
+    {
+      "text": "بِهِۦٓ ۖ",
+      "transliteration": "bihi",
+      "position": 5
+    },
+    {
+      "text": "إِنَّهُۥ",
+      "transliteration": "innahu",
+      "position": 6
+    },
+    {
+      "text": "عَلِيمٌۢ",
+      "transliteration": "ʿalīmun",
+      "position": 7
+    },
+    {
+      "text": "بِذَاتِ",
+      "transliteration": "bidhāti",
+      "position": 8
+    },
+    {
+      "text": "ٱلصُّدُورِ",
+      "transliteration": "l-ṣudūri",
+      "position": 9
+    }
+  ],
+  "words:67:14": [
+    {
+      "text": "أَلَا",
+      "transliteration": "alā",
+      "position": 1
+    },
+    {
+      "text": "يَعْلَمُ",
+      "transliteration": "yaʿlamu",
+      "position": 2
+    },
+    {
+      "text": "مَنْ",
+      "transliteration": "man",
+      "position": 3
+    },
+    {
+      "text": "خَلَقَ",
+      "transliteration": "khalaqa",
+      "position": 4
+    },
+    {
+      "text": "وَهُوَ",
+      "transliteration": "wahuwa",
+      "position": 5
+    },
+    {
+      "text": "ٱللَّطِيفُ",
+      "transliteration": "l-laṭīfu",
+      "position": 6
+    },
+    {
+      "text": "ٱلْخَبِيرُ",
+      "transliteration": "l-khabīru",
+      "position": 7
+    }
+  ],
+  "words:67:15": [
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 1
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 2
+    },
+    {
+      "text": "جَعَلَ",
+      "transliteration": "jaʿala",
+      "position": 3
+    },
+    {
+      "text": "لَكُمُ",
+      "transliteration": "lakumu",
+      "position": 4
+    },
+    {
+      "text": "ٱلْأَرْضَ",
+      "transliteration": "l-arḍa",
+      "position": 5
+    },
+    {
+      "text": "ذَلُولًۭا",
+      "transliteration": "dhalūlan",
+      "position": 6
+    },
+    {
+      "text": "فَٱمْشُوا۟",
+      "transliteration": "fa-im'shū",
+      "position": 7
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 8
+    },
+    {
+      "text": "مَنَاكِبِهَا",
+      "transliteration": "manākibihā",
+      "position": 9
+    },
+    {
+      "text": "وَكُلُوا۟",
+      "transliteration": "wakulū",
+      "position": 10
+    },
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 11
+    },
+    {
+      "text": "رِّزْقِهِۦ ۖ",
+      "transliteration": "riz'qihi",
+      "position": 12
+    },
+    {
+      "text": "وَإِلَيْهِ",
+      "transliteration": "wa-ilayhi",
+      "position": 13
+    },
+    {
+      "text": "ٱلنُّشُورُ",
+      "transliteration": "l-nushūru",
+      "position": 14
+    }
+  ],
+  "words:67:16": [
+    {
+      "text": "ءَأَمِنتُم",
+      "transliteration": "a-amintum",
+      "position": 1
+    },
+    {
+      "text": "مَّن",
+      "transliteration": "man",
+      "position": 2
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 3
+    },
+    {
+      "text": "ٱلسَّمَآءِ",
+      "transliteration": "l-samāi",
+      "position": 4
+    },
+    {
+      "text": "أَن",
+      "transliteration": "an",
+      "position": 5
+    },
+    {
+      "text": "يَخْسِفَ",
+      "transliteration": "yakhsifa",
+      "position": 6
+    },
+    {
+      "text": "بِكُمُ",
+      "transliteration": "bikumu",
+      "position": 7
+    },
+    {
+      "text": "ٱلْأَرْضَ",
+      "transliteration": "l-arḍa",
+      "position": 8
+    },
+    {
+      "text": "فَإِذَا",
+      "transliteration": "fa-idhā",
+      "position": 9
+    },
+    {
+      "text": "هِىَ",
+      "transliteration": "hiya",
+      "position": 10
+    },
+    {
+      "text": "تَمُورُ",
+      "transliteration": "tamūru",
+      "position": 11
+    }
+  ],
+  "words:67:17": [
+    {
+      "text": "أَمْ",
+      "transliteration": "am",
+      "position": 1
+    },
+    {
+      "text": "أَمِنتُم",
+      "transliteration": "amintum",
+      "position": 2
+    },
+    {
+      "text": "مَّن",
+      "transliteration": "man",
+      "position": 3
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 4
+    },
+    {
+      "text": "ٱلسَّمَآءِ",
+      "transliteration": "l-samāi",
+      "position": 5
+    },
+    {
+      "text": "أَن",
+      "transliteration": "an",
+      "position": 6
+    },
+    {
+      "text": "يُرْسِلَ",
+      "transliteration": "yur'sila",
+      "position": 7
+    },
+    {
+      "text": "عَلَيْكُمْ",
+      "transliteration": "ʿalaykum",
+      "position": 8
+    },
+    {
+      "text": "حَاصِبًۭا ۖ",
+      "transliteration": "ḥāṣiban",
+      "position": 9
+    },
+    {
+      "text": "فَسَتَعْلَمُونَ",
+      "transliteration": "fasataʿlamūna",
+      "position": 10
+    },
+    {
+      "text": "كَيْفَ",
+      "transliteration": "kayfa",
+      "position": 11
+    },
+    {
+      "text": "نَذِيرِ",
+      "transliteration": "nadhīri",
+      "position": 12
+    }
+  ],
+  "words:67:18": [
+    {
+      "text": "وَلَقَدْ",
+      "transliteration": "walaqad",
+      "position": 1
+    },
+    {
+      "text": "كَذَّبَ",
+      "transliteration": "kadhaba",
+      "position": 2
+    },
+    {
+      "text": "ٱلَّذِينَ",
+      "transliteration": "alladhīna",
+      "position": 3
+    },
+    {
+      "text": "مِن",
+      "transliteration": "min",
+      "position": 4
+    },
+    {
+      "text": "قَبْلِهِمْ",
+      "transliteration": "qablihim",
+      "position": 5
+    },
+    {
+      "text": "فَكَيْفَ",
+      "transliteration": "fakayfa",
+      "position": 6
+    },
+    {
+      "text": "كَانَ",
+      "transliteration": "kāna",
+      "position": 7
+    },
+    {
+      "text": "نَكِيرِ",
+      "transliteration": "nakīri",
+      "position": 8
+    }
+  ],
+  "words:67:19": [
+    {
+      "text": "أَوَلَمْ",
+      "transliteration": "awalam",
+      "position": 1
+    },
+    {
+      "text": "يَرَوْا۟",
+      "transliteration": "yaraw",
+      "position": 2
+    },
+    {
+      "text": "إِلَى",
+      "transliteration": "ilā",
+      "position": 3
+    },
+    {
+      "text": "ٱلطَّيْرِ",
+      "transliteration": "l-ṭayri",
+      "position": 4
+    },
+    {
+      "text": "فَوْقَهُمْ",
+      "transliteration": "fawqahum",
+      "position": 5
+    },
+    {
+      "text": "صَـٰٓفَّـٰتٍۢ",
+      "transliteration": "ṣāffātin",
+      "position": 6
+    },
+    {
+      "text": "وَيَقْبِضْنَ ۚ",
+      "transliteration": "wayaqbiḍ'na",
+      "position": 7
+    },
+    {
+      "text": "مَا",
+      "transliteration": "mā",
+      "position": 8
+    },
+    {
+      "text": "يُمْسِكُهُنَّ",
+      "transliteration": "yum'sikuhunna",
+      "position": 9
+    },
+    {
+      "text": "إِلَّا",
+      "transliteration": "illā",
+      "position": 10
+    },
+    {
+      "text": "ٱلرَّحْمَـٰنُ ۚ",
+      "transliteration": "l-raḥmānu",
+      "position": 11
+    },
+    {
+      "text": "إِنَّهُۥ",
+      "transliteration": "innahu",
+      "position": 12
+    },
+    {
+      "text": "بِكُلِّ",
+      "transliteration": "bikulli",
+      "position": 13
+    },
+    {
+      "text": "شَىْءٍۭ",
+      "transliteration": "shayin",
+      "position": 14
+    },
+    {
+      "text": "بَصِيرٌ",
+      "transliteration": "baṣīrun",
+      "position": 15
+    }
+  ],
+  "words:67:20": [
+    {
+      "text": "أَمَّنْ",
+      "transliteration": "amman",
+      "position": 1
+    },
+    {
+      "text": "هَـٰذَا",
+      "transliteration": "hādhā",
+      "position": 2
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 3
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 4
+    },
+    {
+      "text": "جُندٌۭ",
+      "transliteration": "jundun",
+      "position": 5
+    },
+    {
+      "text": "لَّكُمْ",
+      "transliteration": "lakum",
+      "position": 6
+    },
+    {
+      "text": "يَنصُرُكُم",
+      "transliteration": "yanṣurukum",
+      "position": 7
+    },
+    {
+      "text": "مِّن",
+      "transliteration": "min",
+      "position": 8
+    },
+    {
+      "text": "دُونِ",
+      "transliteration": "dūni",
+      "position": 9
+    },
+    {
+      "text": "ٱلرَّحْمَـٰنِ ۚ",
+      "transliteration": "l-raḥmāni",
+      "position": 10
+    },
+    {
+      "text": "إِنِ",
+      "transliteration": "ini",
+      "position": 11
+    },
+    {
+      "text": "ٱلْكَـٰفِرُونَ",
+      "transliteration": "l-kāfirūna",
+      "position": 12
+    },
+    {
+      "text": "إِلَّا",
+      "transliteration": "illā",
+      "position": 13
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 14
+    },
+    {
+      "text": "غُرُورٍ",
+      "transliteration": "ghurūrin",
+      "position": 15
+    }
+  ],
+  "words:67:21": [
+    {
+      "text": "أَمَّنْ",
+      "transliteration": "amman",
+      "position": 1
+    },
+    {
+      "text": "هَـٰذَا",
+      "transliteration": "hādhā",
+      "position": 2
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 3
+    },
+    {
+      "text": "يَرْزُقُكُمْ",
+      "transliteration": "yarzuqukum",
+      "position": 4
+    },
+    {
+      "text": "إِنْ",
+      "transliteration": "in",
+      "position": 5
+    },
+    {
+      "text": "أَمْسَكَ",
+      "transliteration": "amsaka",
+      "position": 6
+    },
+    {
+      "text": "رِزْقَهُۥ ۚ",
+      "transliteration": "riz'qahu",
+      "position": 7
+    },
+    {
+      "text": "بَل",
+      "transliteration": "bal",
+      "position": 8
+    },
+    {
+      "text": "لَّجُّوا۟",
+      "transliteration": "lajjū",
+      "position": 9
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 10
+    },
+    {
+      "text": "عُتُوٍّۢ",
+      "transliteration": "ʿutuwwin",
+      "position": 11
+    },
+    {
+      "text": "وَنُفُورٍ",
+      "transliteration": "wanufūrin",
+      "position": 12
+    }
+  ],
+  "words:67:22": [
+    {
+      "text": "أَفَمَن",
+      "transliteration": "afaman",
+      "position": 1
+    },
+    {
+      "text": "يَمْشِى",
+      "transliteration": "yamshī",
+      "position": 2
+    },
+    {
+      "text": "مُكِبًّا",
+      "transliteration": "mukibban",
+      "position": 3
+    },
+    {
+      "text": "عَلَىٰ",
+      "transliteration": "ʿalā",
+      "position": 4
+    },
+    {
+      "text": "وَجْهِهِۦٓ",
+      "transliteration": "wajhihi",
+      "position": 5
+    },
+    {
+      "text": "أَهْدَىٰٓ",
+      "transliteration": "ahdā",
+      "position": 6
+    },
+    {
+      "text": "أَمَّن",
+      "transliteration": "amman",
+      "position": 7
+    },
+    {
+      "text": "يَمْشِى",
+      "transliteration": "yamshī",
+      "position": 8
+    },
+    {
+      "text": "سَوِيًّا",
+      "transliteration": "sawiyyan",
+      "position": 9
+    },
+    {
+      "text": "عَلَىٰ",
+      "transliteration": "ʿalā",
+      "position": 10
+    },
+    {
+      "text": "صِرَٰطٍۢ",
+      "transliteration": "ṣirāṭin",
+      "position": 11
+    },
+    {
+      "text": "مُّسْتَقِيمٍۢ",
+      "transliteration": "mus'taqīmin",
+      "position": 12
+    }
+  ],
+  "words:67:23": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 2
+    },
+    {
+      "text": "ٱلَّذِىٓ",
+      "transliteration": "alladhī",
+      "position": 3
+    },
+    {
+      "text": "أَنشَأَكُمْ",
+      "transliteration": "ansha-akum",
+      "position": 4
+    },
+    {
+      "text": "وَجَعَلَ",
+      "transliteration": "wajaʿala",
+      "position": 5
+    },
+    {
+      "text": "لَكُمُ",
+      "transliteration": "lakumu",
+      "position": 6
+    },
+    {
+      "text": "ٱلسَّمْعَ",
+      "transliteration": "l-samʿa",
+      "position": 7
+    },
+    {
+      "text": "وَٱلْأَبْصَـٰرَ",
+      "transliteration": "wal-abṣāra",
+      "position": 8
+    },
+    {
+      "text": "وَٱلْأَفْـِٔدَةَ ۖ",
+      "transliteration": "wal-afidata",
+      "position": 9
+    },
+    {
+      "text": "قَلِيلًۭا",
+      "transliteration": "qalīlan",
+      "position": 10
+    },
+    {
+      "text": "مَّا",
+      "transliteration": "mā",
+      "position": 11
+    },
+    {
+      "text": "تَشْكُرُونَ",
+      "transliteration": "tashkurūna",
+      "position": 12
+    }
+  ],
+  "words:67:24": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 2
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 3
+    },
+    {
+      "text": "ذَرَأَكُمْ",
+      "transliteration": "dhara-akum",
+      "position": 4
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 5
+    },
+    {
+      "text": "ٱلْأَرْضِ",
+      "transliteration": "l-arḍi",
+      "position": 6
+    },
+    {
+      "text": "وَإِلَيْهِ",
+      "transliteration": "wa-ilayhi",
+      "position": 7
+    },
+    {
+      "text": "تُحْشَرُونَ",
+      "transliteration": "tuḥ'sharūna",
+      "position": 8
+    }
+  ],
+  "words:67:25": [
+    {
+      "text": "وَيَقُولُونَ",
+      "transliteration": "wayaqūlūna",
+      "position": 1
+    },
+    {
+      "text": "مَتَىٰ",
+      "transliteration": "matā",
+      "position": 2
+    },
+    {
+      "text": "هَـٰذَا",
+      "transliteration": "hādhā",
+      "position": 3
+    },
+    {
+      "text": "ٱلْوَعْدُ",
+      "transliteration": "l-waʿdu",
+      "position": 4
+    },
+    {
+      "text": "إِن",
+      "transliteration": "in",
+      "position": 5
+    },
+    {
+      "text": "كُنتُمْ",
+      "transliteration": "kuntum",
+      "position": 6
+    },
+    {
+      "text": "صَـٰدِقِينَ",
+      "transliteration": "ṣādiqīna",
+      "position": 7
+    }
+  ],
+  "words:67:26": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "إِنَّمَا",
+      "transliteration": "innamā",
+      "position": 2
+    },
+    {
+      "text": "ٱلْعِلْمُ",
+      "transliteration": "l-ʿil'mu",
+      "position": 3
+    },
+    {
+      "text": "عِندَ",
+      "transliteration": "ʿinda",
+      "position": 4
+    },
+    {
+      "text": "ٱللَّهِ",
+      "transliteration": "l-lahi",
+      "position": 5
+    },
+    {
+      "text": "وَإِنَّمَآ",
+      "transliteration": "wa-innamā",
+      "position": 6
+    },
+    {
+      "text": "أَنَا۠",
+      "transliteration": "anā",
+      "position": 7
+    },
+    {
+      "text": "نَذِيرٌۭ",
+      "transliteration": "nadhīrun",
+      "position": 8
+    },
+    {
+      "text": "مُّبِينٌۭ",
+      "transliteration": "mubīnun",
+      "position": 9
+    }
+  ],
+  "words:67:27": [
+    {
+      "text": "فَلَمَّا",
+      "transliteration": "falammā",
+      "position": 1
+    },
+    {
+      "text": "رَأَوْهُ",
+      "transliteration": "ra-awhu",
+      "position": 2
+    },
+    {
+      "text": "زُلْفَةًۭ",
+      "transliteration": "zul'fatan",
+      "position": 3
+    },
+    {
+      "text": "سِيٓـَٔتْ",
+      "transliteration": "sīat",
+      "position": 4
+    },
+    {
+      "text": "وُجُوهُ",
+      "transliteration": "wujūhu",
+      "position": 5
+    },
+    {
+      "text": "ٱلَّذِينَ",
+      "transliteration": "alladhīna",
+      "position": 6
+    },
+    {
+      "text": "كَفَرُوا۟",
+      "transliteration": "kafarū",
+      "position": 7
+    },
+    {
+      "text": "وَقِيلَ",
+      "transliteration": "waqīla",
+      "position": 8
+    },
+    {
+      "text": "هَـٰذَا",
+      "transliteration": "hādhā",
+      "position": 9
+    },
+    {
+      "text": "ٱلَّذِى",
+      "transliteration": "alladhī",
+      "position": 10
+    },
+    {
+      "text": "كُنتُم",
+      "transliteration": "kuntum",
+      "position": 11
+    },
+    {
+      "text": "بِهِۦ",
+      "transliteration": "bihi",
+      "position": 12
+    },
+    {
+      "text": "تَدَّعُونَ",
+      "transliteration": "taddaʿūna",
+      "position": 13
+    }
+  ],
+  "words:67:28": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "أَرَءَيْتُمْ",
+      "transliteration": "ara-aytum",
+      "position": 2
+    },
+    {
+      "text": "إِنْ",
+      "transliteration": "in",
+      "position": 3
+    },
+    {
+      "text": "أَهْلَكَنِىَ",
+      "transliteration": "ahlakaniya",
+      "position": 4
+    },
+    {
+      "text": "ٱللَّهُ",
+      "transliteration": "l-lahu",
+      "position": 5
+    },
+    {
+      "text": "وَمَن",
+      "transliteration": "waman",
+      "position": 6
+    },
+    {
+      "text": "مَّعِىَ",
+      "transliteration": "maʿiya",
+      "position": 7
+    },
+    {
+      "text": "أَوْ",
+      "transliteration": "aw",
+      "position": 8
+    },
+    {
+      "text": "رَحِمَنَا",
+      "transliteration": "raḥimanā",
+      "position": 9
+    },
+    {
+      "text": "فَمَن",
+      "transliteration": "faman",
+      "position": 10
+    },
+    {
+      "text": "يُجِيرُ",
+      "transliteration": "yujīru",
+      "position": 11
+    },
+    {
+      "text": "ٱلْكَـٰفِرِينَ",
+      "transliteration": "l-kāfirīna",
+      "position": 12
+    },
+    {
+      "text": "مِنْ",
+      "transliteration": "min",
+      "position": 13
+    },
+    {
+      "text": "عَذَابٍ",
+      "transliteration": "ʿadhābin",
+      "position": 14
+    },
+    {
+      "text": "أَلِيمٍۢ",
+      "transliteration": "alīmin",
+      "position": 15
+    }
+  ],
+  "words:67:29": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 2
+    },
+    {
+      "text": "ٱلرَّحْمَـٰنُ",
+      "transliteration": "l-raḥmānu",
+      "position": 3
+    },
+    {
+      "text": "ءَامَنَّا",
+      "transliteration": "āmannā",
+      "position": 4
+    },
+    {
+      "text": "بِهِۦ",
+      "transliteration": "bihi",
+      "position": 5
+    },
+    {
+      "text": "وَعَلَيْهِ",
+      "transliteration": "waʿalayhi",
+      "position": 6
+    },
+    {
+      "text": "تَوَكَّلْنَا ۖ",
+      "transliteration": "tawakkalnā",
+      "position": 7
+    },
+    {
+      "text": "فَسَتَعْلَمُونَ",
+      "transliteration": "fasataʿlamūna",
+      "position": 8
+    },
+    {
+      "text": "مَنْ",
+      "transliteration": "man",
+      "position": 9
+    },
+    {
+      "text": "هُوَ",
+      "transliteration": "huwa",
+      "position": 10
+    },
+    {
+      "text": "فِى",
+      "transliteration": "fī",
+      "position": 11
+    },
+    {
+      "text": "ضَلَـٰلٍۢ",
+      "transliteration": "ḍalālin",
+      "position": 12
+    },
+    {
+      "text": "مُّبِينٍۢ",
+      "transliteration": "mubīnin",
+      "position": 13
+    }
+  ],
+  "words:67:30": [
+    {
+      "text": "قُلْ",
+      "transliteration": "qul",
+      "position": 1
+    },
+    {
+      "text": "أَرَءَيْتُمْ",
+      "transliteration": "ara-aytum",
+      "position": 2
+    },
+    {
+      "text": "إِنْ",
+      "transliteration": "in",
+      "position": 3
+    },
+    {
+      "text": "أَصْبَحَ",
+      "transliteration": "aṣbaḥa",
+      "position": 4
+    },
+    {
+      "text": "مَآؤُكُمْ",
+      "transliteration": "māukum",
+      "position": 5
+    },
+    {
+      "text": "غَوْرًۭا",
+      "transliteration": "ghawran",
+      "position": 6
+    },
+    {
+      "text": "فَمَن",
+      "transliteration": "faman",
+      "position": 7
+    },
+    {
+      "text": "يَأْتِيكُم",
+      "transliteration": "yatīkum",
+      "position": 8
+    },
+    {
+      "text": "بِمَآءٍۢ",
+      "transliteration": "bimāin",
+      "position": 9
+    },
+    {
+      "text": "مَّعِينٍۭ",
+      "transliteration": "maʿīnin",
+      "position": 10
+    }
+  ],
+  "audio_v4:5:112:1": {
+    "audio_url": "https://verses.quran.com/Rifai/mp3/112001.mp3",
+    "segments": []
+  },
+  "audio_v4:5:112:2": {
+    "audio_url": "https://verses.quran.com/Rifai/mp3/112002.mp3",
+    "segments": []
+  },
+  "audio_v4:5:112:3": {
+    "audio_url": "https://verses.quran.com/Rifai/mp3/112003.mp3",
+    "segments": []
+  },
+  "audio_v4:5:112:4": {
+    "audio_url": "https://verses.quran.com/Rifai/mp3/112004.mp3",
+    "segments": []
+  }
 }
