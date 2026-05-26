@@ -61,6 +61,7 @@ jobs:
 
       - name: Generate and upload long-form compilation
         env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           VIDEO_ENCODER: libx264  # Force CPU encoding on GitHub Actions runner
           APPROVAL_REQUIRED: 'false'

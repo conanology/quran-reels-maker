@@ -5,8 +5,6 @@ on:
     # Trigger according to Mecca timezone slots (UTC+3)
     # 5:00 AM Mecca Time -> 02:00 UTC (Short)
     - cron: '0 2 * * *'
-    # 8:00 PM Mecca Time -> 17:00 UTC (Short)
-    - cron: '0 17 * * *'
     # 9:00 PM Mecca Friday -> 18:00 UTC Friday (Weekly Compilation / Full Surah Longform)
     - cron: '0 18 * * 5'
     # 10:00 PM Mecca Saturday -> 19:00 UTC Saturday (Sleep Relaxation Longform)
@@ -52,12 +50,19 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install chromium
+
       - name: Restore YouTube and TikTok credentials
         run: |
           echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
           echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
           if [ -n "${{ secrets.TIKTOK_TOKEN_JSON }}" ]; then
             echo '${{ secrets.TIKTOK_TOKEN_JSON }}' > token_tiktok.json
+          fi
+          if [ -n "${{ secrets.TIKTOK_COOKIES_TXT }}" ]; then
+            echo '${{ secrets.TIKTOK_COOKIES_TXT }}' > cookies.txt
           fi
 
       - name: Ensure Amiri font exists
@@ -105,9 +110,9 @@ jobs:
           python main.py growth-engine run $FORCED_SLOT $DRY_RUN_FLAG
 
       - name: Commit progress & DB updates
-        if: always()
-        run: |
-          rm -f client_secrets.json token.json token.pickle token_tiktok.json
+         if: always()
+         run: |
+           rm -f client_secrets.json token.json token.pickle token_tiktok.json cookies.txt tiktok_cookies.txt
           
           # Clean large render folders
           rm -rf outputs/videos/*

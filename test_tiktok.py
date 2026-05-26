@@ -147,12 +147,19 @@ def test_direct_upload_flow(mock_put, mock_post):
     dummy_video = Path("dummy_test_video.mp4")
     dummy_video.write_bytes(b"DUMMY_VIDEO_CONTENT_12345")
     
-    # Set up dummy access token
-    with patch("tiktok.uploader.get_tiktok_token", return_value="dummy_token"):
-        res = upload_to_tiktok(
-            video_path=dummy_video,
-            metadata={"caption": "Test Quran recitation video"}
-        )
+    # Set up dummy access token and bypass local cookies.txt check
+    original_exists = Path.exists
+    def mock_exists(self):
+        if self.name == "cookies.txt":
+            return False
+        return original_exists(self)
+        
+    with patch.object(Path, "exists", mock_exists):
+        with patch("tiktok.uploader.get_tiktok_token", return_value="dummy_token"):
+            res = upload_to_tiktok(
+                video_path=dummy_video,
+                metadata={"caption": "Test Quran recitation video"}
+            )
         
         # Verify result status
         assert res is not None

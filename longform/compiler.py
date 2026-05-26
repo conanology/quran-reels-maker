@@ -103,7 +103,11 @@ def _build_encoder_args() -> List[str]:
     if DETECTED_ENCODER == "h264_nvenc":
         args.extend(NVENC_PARAMS)
     else:
-        args.extend(["-crf", "20", "-preset", "medium"])
+        if os.getenv("GITHUB_ACTIONS") == "true":
+            # Use ultrafast preset to avoid runner timeouts on CPU
+            args.extend(["-crf", "22", "-preset", "ultrafast"])
+        else:
+            args.extend(["-crf", "20", "-preset", "medium"])
     return args
 
 
