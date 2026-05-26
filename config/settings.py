@@ -340,4 +340,4 @@ RECITER_MAPPING_V4 = {
 # AI BRAIN SETTINGS (OpenRouter)
 # =============================================================================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")

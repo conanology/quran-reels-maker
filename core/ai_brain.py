@@ -36,7 +36,7 @@ def call_openrouter(prompt: str, system_prompt: str = "") -> str:
         "max_tokens": 1000
     }
 
-    primary_model = OPENROUTER_MODEL or "deepseek/deepseek-v4-flash:free"
+    primary_model = OPENROUTER_MODEL or "deepseek/deepseek-v4-flash"
     models_to_try = [primary_model]
     if primary_model != "openrouter/free":
         models_to_try.append("openrouter/free")
