@@ -2,8 +2,9 @@ name: Scheduled Quran Long-Form Compilation
 
 on:
   schedule:
-    # Run every Sunday, Wednesday, and Friday at 02:00 UTC (4:00 AM Cairo Time)
-    - cron: '0 2 * * 0,3,5'
+    # Run every Sunday, Wednesday, and Friday at 03:00 UTC (5:00 AM Cairo / 6:00 AM Mecca Time)
+    - cron: '0 3 * * 0,3,5'
+
 
   workflow_dispatch:
     inputs:
@@ -98,5 +99,9 @@ jobs:
             git add outputs/longform/background_usage.json
           fi
           
-          git diff --cached --quiet || git commit -m "Update Quran long-form progress and backgrounds database [skip ci]"
-          git push
+          git diff --cached --quiet || {
+            git commit -m "Update Quran long-form progress and backgrounds database [skip ci]"
+            git pull --rebase origin master
+            git push
+          }
+

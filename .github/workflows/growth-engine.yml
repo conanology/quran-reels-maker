@@ -134,5 +134,9 @@ jobs:
             git add outputs/longform/background_usage.json
           fi
           
-          git diff --cached --quiet || git commit -m "Auto-update Quran progress and performance databases [skip ci]"
-          git push
+          git diff --cached --quiet || {
+            git commit -m "Auto-update Quran progress and performance databases [skip ci]"
+            git pull --rebase origin master
+            git push
+          }
+
