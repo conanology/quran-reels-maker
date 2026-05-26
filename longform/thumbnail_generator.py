@@ -134,14 +134,30 @@ def generate_longform_thumbnail(
         ar_title = f"سُورَة {SURAH_NAMES_AR[surah_start - 1]}"
     else:
         ar_title = f"سُورَة {SURAH_NAMES_AR[surah_start - 1]} - {SURAH_NAMES_AR[surah_end - 1]}"
-        
-    # Apply Arabic Reshaping & Bidi
-    reshaper = arabic_reshaper.ArabicReshaper(configuration={
-        'delete_harakat': False,
-        'delete_tatweel': False,
-    })
-    reshaped_ar = reshaper.reshape(ar_title)
-    ar_display = get_display(reshaped_ar)
+
+    from core.text_renderer import PILTextRenderer
+    from core.style_config import StyleConfig
+    
+    # Render Arabic Title (Gold) using PILTextRenderer for 100% correct layout & connection
+    ar_style = StyleConfig(
+        font_path=str(font_ar_path),
+        stroke_color="black",
+        stroke_width=5,
+        shadow_opacity=0.0
+    )
+    ar_renderer = PILTextRenderer(style=ar_style)
+    ar_img_array = ar_renderer.render_text(
+        text=ar_title,
+        font_size=96,
+        color="#D4AF37", # Gold
+        is_arabic=True,
+        words_per_line=10 # Prevent premature wrapping
+    )
+    ar_img = Image.fromarray(ar_img_array)
+    ar_w, ar_h = ar_img.size
+
+    # Paste the rendered Arabic image onto the overlay, centered horizontally at y=110
+    overlay.paste(ar_img, ((1280 - ar_w) // 2, 110), ar_img)
 
     # 5. Prepare English Surah Title text
     if custom_title_en:
@@ -161,19 +177,7 @@ def generate_longform_thumbnail(
     # - English title (Dubai-Bold): y=250, size=76, white
     # - Subtitle: y=420, size=36, gold/yellow, smaller tracking (represented by smaller font if needed, font_medium)
     # - Reciter name: y=530, size=28 (font_small), clean light gray
-    
-    # Render Arabic Title (Gold)
-    bbox_ar = draw.textbbox((0, 0), ar_display, font=font_large_ar)
-    ar_w = bbox_ar[2] - bbox_ar[0]
-    draw_text_with_stroke(
-        draw,
-        ((1280 - ar_w) // 2, 110),
-        ar_display,
-        font=font_large_ar,
-        text_color=(212, 175, 55, 255),
-        stroke_color=(0, 0, 0, 255),
-        stroke_width=5
-    )
+
 
     # Render English Title (White)
     bbox_en = draw.textbbox((0, 0), en_display, font=font_large_en)
