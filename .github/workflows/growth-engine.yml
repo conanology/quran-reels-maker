@@ -110,9 +110,9 @@ jobs:
           python main.py growth-engine run $FORCED_SLOT $DRY_RUN_FLAG
 
       - name: Commit progress & DB updates
-         if: always()
-         run: |
-           rm -f client_secrets.json token.json token.pickle token_tiktok.json cookies.txt tiktok_cookies.txt
+        if: always()
+        run: |
+          rm -f client_secrets.json token.json token.pickle token_tiktok.json cookies.txt tiktok_cookies.txt
           
           # Clean large render folders
           rm -rf outputs/videos/*
