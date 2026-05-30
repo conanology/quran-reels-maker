@@ -136,6 +136,7 @@ jobs:
           
           git diff --cached --quiet || {
             git commit -m "Auto-update Quran progress and performance databases [skip ci]"
+            git reset --hard HEAD
             git pull --rebase origin master
             git push
           }

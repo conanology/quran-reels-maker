@@ -9,6 +9,7 @@ from loguru import logger
 from config.settings import (
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
+    RECITERS,
 )
 
 def call_openrouter(prompt: str, system_prompt: str = "") -> str:
@@ -98,6 +99,10 @@ def generate_visual_prompt(translation: str) -> str:
     if ai_response:
         # Strip outer quotes if the model wrapped it in quotes
         ai_response = ai_response.strip("\"'")
+        # Ensure we add premium cinematic styling tags for visual excellence
+        style_suffix = ", cinematic lighting, ultra-detailed, 8k resolution, photorealistic, serene atmospheric composition, beautiful colors, premium aesthetic"
+        if not any(tag in ai_response.lower() for tag in ["8k", "photorealistic", "cinematic"]):
+            ai_response += style_suffix
         logger.info(f"AI generated visual prompt: {ai_response}")
         return ai_response
 
@@ -114,6 +119,92 @@ def _clean_json_response(text: str) -> str:
     if text.endswith("```"):
         text = text[:-3]
     return text.strip()
+
+
+def sanitize_reciter_names(text: str, current_reciter_key: str) -> str:
+    """
+    Scans the text for names of other reciters and replaces them with the
+    current reciter's corresponding English/Arabic name to prevent hallucination.
+    """
+    if not text or not current_reciter_key:
+        return text
+
+    # Define patterns for all reciters
+    RECITER_PATTERNS = {
+        "abdul_basit_mujawwad": {
+            "en": ["Abdul Basit (Mujawwad)", "Abdul Basit Mujawwad", "Abdul Basit", "Abdul Samad", "AbdulSamad"],
+            "ar": ["عبدالباسط عبدالصمد (مجود)", "الشيخ عبدالباسط عبدالصمد", "عبدالباسط عبدالصمد", "عبدالباسط", "عبد الصمد"]
+        },
+        "abdul_basit_murattal": {
+            "en": ["Abdul Basit (Murattal)", "Abdul Basit Murattal", "Abdul Basit", "Abdul Samad", "AbdulSamad"],
+            "ar": ["عبدالباسط عبدالصمد (مرتل)", "الشيخ عبدالباسط عبدالصمد", "عبدالباسط عبدالصمد", "عبدالباسط", "عبد الصمد"]
+        },
+        "sudais": {
+            "en": ["Abdurrahman As-Sudais", "Abdurrahmaan As-Sudais", "As-Sudais", "Sudais"],
+            "ar": ["عبدالرحمن السديس", "الشيخ عبدالرحمن السديس", "السديس"]
+        },
+        "maher_muaiqly": {
+            "en": ["Maher Al-Muaiqly", "Maher AlMuaiqly", "Al-Muaiqly", "AlMuaiqly", "Maher"],
+            "ar": ["ماهر المعيقلي", "الشيخ ماهر المعيقلي", "المعيقلي", "ماهر"]
+        },
+        "minshawi_mujawwad": {
+            "en": ["Minshawi (Mujawwad)", "Minshawi Mujawwad", "Minshawi", "Minshawy", "Al-Minshawi", "Al-Minshawy"],
+            "ar": ["محمد صديق المنشاوي (مجود)", "الشيخ محمد صديق المنشاوي", "محمد صديق المنشاوي", "المنشاوي"]
+        },
+        "shuraym": {
+            "en": ["Saud Ash-Shuraym", "Saood ash-Shuraym", "Ash-Shuraym", "Shuraym"],
+            "ar": ["سعود الشريم", "الشيخ سعود الشريم", "الشريم"]
+        },
+        "alafasy": {
+            "en": ["Mishary Alafasy", "Mishary Rashid Alafasy", "Alafasy", "Mishary"],
+            "ar": ["مشاري العفاسي", "الشيخ مشاري العفاسي", "العفاسي", "مشاري"]
+        },
+        "husary": {
+            "en": ["Mahmoud Khalil Al-Husary", "Al-Husary", "Husary", "Mahmoud Khalil"],
+            "ar": ["محمود خليل الحصري", "الشيخ محمود خليل الحصري", "الحصري"]
+        },
+        "hudhaify": {
+            "en": ["Ali Al-Hudhaify", "Al-Hudhaify", "Hudhaify"],
+            "ar": ["عبدالله الحذيفي", "الشيخ عبدالله الحذيفي", "الحذيفي", "علي الحذيفي"]
+        },
+        "shaatree": {
+            "en": ["Abu Bakr Ash-Shaatree", "Ash-Shaatree", "Shaatree", "Abu Bakr"],
+            "ar": ["أبو بكر الشاطري", "الشيخ أبو بكر الشاطري", "الشاطري"]
+        },
+        "banna": {
+            "en": ["Mahmoud Ali Al-Banna", "Al-Banna", "Banna"],
+            "ar": ["محمود علي البنا", "الشيخ محمود علي البنا", "البنا"]
+        }
+    }
+
+    current_info = RECITERS.get(current_reciter_key, {})
+    current_en = current_info.get("name_en", current_reciter_key)
+    current_ar = current_info.get("name_ar", current_reciter_key)
+
+    import re
+
+    # Replace all other reciters' names
+    for key, patterns in RECITER_PATTERNS.items():
+        if key == current_reciter_key:
+            continue
+            
+        # We need to distinguish Mujawwad vs Murattal for Abdul Basit
+        if "abdul_basit" in current_reciter_key and "abdul_basit" in key:
+            continue
+
+        # Sort patterns by length descending so longer phrases get replaced first
+        sorted_en_patterns = sorted(patterns["en"], key=len, reverse=True)
+        sorted_ar_patterns = sorted(patterns["ar"], key=len, reverse=True)
+
+        for pat in sorted_en_patterns:
+            pattern = re.compile(re.escape(pat), re.IGNORECASE)
+            text = pattern.sub(current_en, text)
+
+        for pat in sorted_ar_patterns:
+            pattern = re.compile(re.escape(pat), re.IGNORECASE)
+            text = pattern.sub(current_ar, text)
+
+    return text
 
 
 def generate_video_metadata(
@@ -135,7 +226,8 @@ def generate_video_metadata(
         "2. \"description\": a beautifully formatted description incorporating a short reflection paragraph (2-3 sentences) "
         "on the verse's meaning/relevance, the full English translation, and key hashtags.\n"
         "3. \"tags\": a list of 10-15 highly relevant tags/keywords.\n\n"
-        "STRICT RULE: Output ONLY raw JSON. Do not include markdown code block formatting or explanations outside the JSON."
+        "STRICT RULE: Output ONLY raw JSON. Do not include markdown code block formatting or explanations outside the JSON.\n"
+        "STRICT RECITER RULE: The video recitation is strictly by the provided reciter. You MUST NOT mention any other reciter's name in any field of the metadata."
     )
 
     prompt = (
@@ -156,6 +248,18 @@ def generate_video_metadata(
         
         # Basic validation
         if all(k in metadata for k in ("title", "description", "tags")):
+            # Find matching reciter key to perform post-sanitization
+            reciter_key = None
+            for k, v in RECITERS.items():
+                if reciter_name == k or reciter_name == v.get("name_en") or reciter_name == v.get("name_ar"):
+                    reciter_key = k
+                    break
+            
+            if reciter_key:
+                metadata["title"] = sanitize_reciter_names(metadata["title"], reciter_key)
+                metadata["description"] = sanitize_reciter_names(metadata["description"], reciter_key)
+                metadata["tags"] = [sanitize_reciter_names(tag, reciter_key) for tag in metadata["tags"]]
+
             logger.info(f"AI generated metadata title: {metadata['title']}")
             return metadata
         else:
@@ -191,7 +295,8 @@ def generate_longform_video_metadata(
         "2. \"reflection\": a beautifully written, reflective introduction paragraph (3-4 sentences) explaining the key themes, "
         "spiritual benefits, or meanings of the Surah(s) compiled. This will be placed at the top of the description to engage listeners.\n"
         "3. \"tags\": a list of 15-20 highly searched tags/keywords for this specific compilation.\n\n"
-        "STRICT RULE: Output ONLY raw JSON. Do not include markdown code block formatting or explanations outside the JSON."
+        "STRICT RULE: Output ONLY raw JSON. Do not include markdown code block formatting or explanations outside the JSON.\n"
+        "STRICT RECITER RULE: The video recitation is strictly by the provided reciter. You MUST NOT mention any other reciter's name in any field of the metadata."
     )
 
     prompt = (
@@ -211,6 +316,18 @@ def generate_longform_video_metadata(
         
         # Basic validation
         if all(k in metadata for k in ("title", "reflection", "tags")):
+            # Find matching reciter key to perform post-sanitization
+            reciter_key = None
+            for k, v in RECITERS.items():
+                if reciter_name == k or reciter_name == v.get("name_en") or reciter_name == v.get("name_ar"):
+                    reciter_key = k
+                    break
+            
+            if reciter_key:
+                metadata["title"] = sanitize_reciter_names(metadata["title"], reciter_key)
+                metadata["reflection"] = sanitize_reciter_names(metadata["reflection"], reciter_key)
+                metadata["tags"] = [sanitize_reciter_names(tag, reciter_key) for tag in metadata["tags"]]
+
             logger.info(f"AI generated longform title: {metadata['title']}")
             return metadata
         else:
