@@ -37,37 +37,50 @@ def ensure_download_dir():
     """Ensure the download directory exists."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Pexels stops returning results after page 6, so 6 x 80 is the real reachable
+# depth per query. Drawing only from page 1 is why every video looked alike.
+PEXELS_PER_PAGE = 80
+PEXELS_MAX_PAGE = 6
+
+
 def search_pexel_video(query: str) -> Optional[Dict]:
     """Search for a video on Pexels matching the query."""
     if not PEXELS_API_KEY:
         logger.warning("PEXELS_API_KEY is not set. Using local backgrounds.")
         return None
-        
+
     url = "https://api.pexels.com/videos/search"
     headers = {"Authorization": PEXELS_API_KEY}
-    params = {
-        "query": query,
-        "per_page": 10,
-        "orientation": "portrait",
-        "size": "medium"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data['videos']:
-                # Filter for videos roughly 15-60 seconds to be useful
-                valid_videos = [
-                    v for v in data['videos'] 
-                    if 15 <= v['duration'] <= 90
-                ]
-                if valid_videos:
-                    return random.choice(valid_videos)
-        return None
-    except Exception as e:
-        logger.error(f"Pexels search failed: {e}")
-        return None
+
+    # Walk pages in random order so repeated runs do not converge on page 1.
+    pages = list(range(1, PEXELS_MAX_PAGE + 1))
+    random.shuffle(pages)
+
+    for page in pages:
+        params = {
+            "query": query,
+            "per_page": PEXELS_PER_PAGE,
+            "page": page,
+            "orientation": "portrait",
+            "size": "medium",
+        }
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+            if response.status_code != 200:
+                logger.warning(f"Pexels search HTTP {response.status_code} for '{query}'")
+                return None
+            videos = response.json().get("videos", [])
+            valid_videos = [v for v in videos if 15 <= v["duration"] <= 90]
+            if valid_videos:
+                logger.debug(
+                    f"Pexels '{query}' page {page}: {len(valid_videos)} candidates"
+                )
+                return random.choice(valid_videos)
+        except Exception as e:
+            logger.error(f"Pexels search failed: {e}")
+            return None
+
+    return None
 
 def download_video(video_data: Dict) -> Optional[Path]:
     """Download the highest quality video file from the Pexels metadata."""

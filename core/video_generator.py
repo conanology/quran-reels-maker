@@ -54,7 +54,11 @@ from config.settings import (
 from core.quran_api import get_surah_name, validate_verse_range
 from core.audio_processor import cleanup_audio_files
 from core.style_config import StyleConfig, DEFAULT_STYLE
-from core.background import pick_random_background, load_and_grade_background
+from core.background import (
+    BackgroundError,
+    pick_random_background,
+    load_and_grade_background,
+)
 from core.ayah_fetcher import fetch_single_ayah
 from core.text_renderer import (
     create_text_clip,
@@ -242,23 +246,36 @@ def generate_reel(
     full_translation = " ".join(item.get("translation", "") for item in ayah_data).strip()
     background_path = None
     
-    if full_translation:
-        try:
-            background_path = download_ai_background(full_translation)
-        except Exception as e:
-            logger.error(f"Error during AI background generation: {e}")
-            
+    # Real footage first. The Pollinations endpoint ignores the requested model
+    # and size: it serves a 576x1024 SANA still that we then upscale 1.88x, which
+    # is what produces the duplicated suns, mirrored horizons and plastic texture.
+    from core.stock_footage import get_dynamic_background
+
+    background_path = get_dynamic_background()
     if background_path:
-        logger.info(f"Using custom AI-generated background: {background_path.name}")
-    else:
-        # Fallback to Pexels dynamic video
-        from core.stock_footage import get_dynamic_background
-        background_path = get_dynamic_background()
-        if background_path:
-            logger.info(f"Using dynamic background from Pexels: {background_path.name}")
-        else:
+        logger.info(f"Using dynamic background from Pexels: {background_path.name}")
+
+    if not background_path:
+        # Raises BackgroundError when the local folder is empty, which is normal
+        # on a CI runner, so keep going to the generated fallback.
+        try:
             background_path = pick_random_background()
             logger.info(f"Using local background: {background_path.name}")
+        except Exception as e:
+            logger.debug(f"No local background available: {e}")
+
+    if not background_path and full_translation:
+        try:
+            background_path = download_ai_background(full_translation)
+            if background_path:
+                logger.warning(
+                    f"Falling back to generated background: {background_path.name}"
+                )
+        except Exception as e:
+            logger.error(f"Error during AI background generation: {e}")
+
+    if not background_path:
+        raise BackgroundError("No background available from Pexels, local, or fallback")
 
     bg_with_grading = load_and_grade_background(
         background_path, total_duration, style, enable_ken_burns=ENABLE_KEN_BURNS,
