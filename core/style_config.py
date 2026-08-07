@@ -36,9 +36,12 @@ class StyleConfig:
 
     # Translation. At 1080x1920 this is the only element a non-Arabic speaker can
     # read, and 36px rendered ~4px wide in the feed - effectively invisible.
-    translation_font_size: int = 54
+    # words_per_line has to keep the rendered line under ~1000px, otherwise
+    # _make_centered_frame scales the whole block down and the size above is moot.
+    translation_font_size: int = 48
+    translation_words_per_line: int = 7
     translation_color: str = "#D0D8E0"
-    translation_y_ratio: float = 0.68
+    translation_y_ratio: float = 0.74  # wrapping properly makes the block taller
 
     # Ayah number
     ayah_number_font_size: int = 48

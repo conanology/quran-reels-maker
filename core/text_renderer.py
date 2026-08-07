@@ -527,14 +527,12 @@ def create_translation_clip(
     if not translation_text:
         return None
 
-    # Wrap long translations into 2 lines
+    # Wrap to a fixed width rather than a fixed line count. Splitting a long
+    # translation into exactly two lines produced a block far wider than the
+    # frame, which _make_centered_frame then scaled down until it was unreadable
+    # - the longer the verse, the smaller its translation became.
     words = translation_text.split()
-    if len(words) > 12:
-        mid = len(words) // 2
-        translation_text = " ".join(words[:mid]) + "\n" + " ".join(words[mid:])
-        wpl = max(6, mid)
-    else:
-        wpl = len(words)  # single line
+    wpl = min(len(words), style.translation_words_per_line)
 
     return create_pil_text_clip(
         translation_text,
