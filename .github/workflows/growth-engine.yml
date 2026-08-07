@@ -50,6 +50,12 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Verify import chain
+        run: |
+          # A broken dependency surfaces here in seconds instead of part-way
+          # through a job that budgets three hours.
+          python -c "import longform, core.growth_engine; print('import chain OK')"
+
       - name: Install Playwright Chromium
         run: |
           python -m playwright install chromium
@@ -140,4 +146,23 @@ jobs:
             git pull --rebase origin master
             git push
           }
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Deliberately curl and not the Python notifier: when the failure is an
+          # import error, anything importing this project would fail to alert too.
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets not configured; skipping alert."
+            exit 0
+          fi
+          curl -sS --max-time 30 -o /dev/null -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=❌ Daily Quran Growth Engine failed — ${RUN_URL}" \
+            || echo "Could not send Telegram alert."
 
