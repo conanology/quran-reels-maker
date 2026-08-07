@@ -9,9 +9,13 @@ try:
     _hog = cv2.HOGDescriptor()
     _hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
     DETECTION_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    # Detection is optional, so no OpenCV failure may reach the caller: this module
+    # is imported by longform/__init__.py and would otherwise break every command.
+    # OpenCV 5.0 removed HOGDescriptor, which raises AttributeError, not ImportError.
+    _hog = None
     DETECTION_AVAILABLE = False
-    logger.warning("opencv-python-headless not installed — person detection disabled")
+    logger.warning(f"Person detection disabled ({type(e).__name__}: {e})")
 
 
 def has_people(video_path: Path, num_frames: int = 5) -> bool:

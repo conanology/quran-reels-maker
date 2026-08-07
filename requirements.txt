@@ -11,7 +11,7 @@ audioop-lts>=0.2.0; python_version>="3.13"  # Required for Python 3.13+
 
 # Video Processing
 moviepy==1.0.3
-opencv-python-headless>=4.8.0
+opencv-python-headless>=4.8.0,<5  # 5.x removed cv2.HOGDescriptor, used by core/person_detector.py
 imageio>=2.9.0
 imageio-ffmpeg>=0.4.7
 
