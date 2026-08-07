@@ -5,8 +5,7 @@ import datetime
 from pathlib import Path
 from typing import Optional
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 from config.settings import DATABASE_PATH
 

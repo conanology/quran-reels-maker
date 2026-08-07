@@ -1,46 +1,51 @@
 # Quran Reels Maker - Dependencies
 # Install with: pip install -r requirements.txt
 
+# CI reinstalls from scratch on every run, so every entry carries an upper bound.
+# An unbounded major bump (opencv 5.0 dropping cv2.HOGDescriptor) took the whole
+# pipeline down for five weeks in July 2026. Raise these deliberately, not by accident.
+
 # Core
-requests>=2.28.0
-python-dotenv>=1.0.0
+requests>=2.28.0,<3
+python-dotenv>=1.0.0,<2
 
 # Audio Processing
-pydub>=0.25.0
-audioop-lts>=0.2.0; python_version>="3.13"  # Required for Python 3.13+
+pydub>=0.25.0,<1
+audioop-lts>=0.2.0,<1; python_version>="3.13"  # Required for Python 3.13+
 
 # Video Processing
 moviepy==1.0.3
-opencv-python-headless>=4.8.0
-imageio>=2.9.0
-imageio-ffmpeg>=0.4.7
+opencv-python-headless>=4.8.0,<5  # 5.x removed cv2.HOGDescriptor, used by core/person_detector.py
+imageio>=2.9.0,<3  # moviepy 1.0.3 requires <3; an imageio 3.0 breaks resolution outright
+imageio-ffmpeg>=0.4.7,<1
+numpy>=1.24,<3  # transitive via moviepy/opencv, pinned so it cannot drift unbounded
 
 # PIL Text Rendering (Arabic RTL support)
-Pillow>=10.0.0
-arabic-reshaper>=3.0.0
-python-bidi>=0.4.2
+Pillow>=10.0.0,<13
+arabic-reshaper>=3.0.0,<4
+python-bidi>=0.4.2,<1  # core/text_renderer.py uses the deprecated bidi.algorithm module
 
 # YouTube API
-google-api-python-client>=2.100.0
-google-auth-oauthlib>=1.1.0
-google-auth-httplib2>=0.1.0
+google-api-python-client>=2.100.0,<3
+google-auth-oauthlib>=1.1.0,<2
+google-auth-httplib2>=0.1.0,<1
 
 # Database
-sqlalchemy>=2.0.0
+sqlalchemy>=2.0.0,<3
 
 # Logging
-loguru>=0.7.0
+loguru>=0.7.0,<1
 
 # Scheduling (optional, for background automation)
-apscheduler>=3.10.0
+apscheduler>=3.10.0,<4
 
 # Timezone handling
 pytz>=2023.3
 
 # Testing
-pytest>=7.0.0
-pytest-mock>=3.10.0
+pytest>=7.0.0,<10
+pytest-mock>=3.10.0,<4
 
 # TikTok Upload (optional)
-tiktok-uploader>=0.1.0
-playwright>=1.40.0
+tiktok-uploader>=0.1.0,<2
+playwright>=1.40.0,<2

@@ -390,7 +390,21 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
     if is_publishing_suppressed() and not dry_run:
         logger.info("Publishing is suppressed. Skipping compilation/posting.")
         return {"status": "suppressed", "message": "High-velocity period suppression active."}
-        
+
+    # Fail fast on dead credentials. get_authenticated_service() falls back to an
+    # interactive OAuth flow when creds are None, which blocks forever on a headless
+    # runner and burns the whole 180-minute job timeout. 'expired' is fine: it refreshes.
+    if not dry_run:
+        from youtube.auth import check_authentication_status
+
+        auth_status = check_authentication_status()
+        if auth_status["status"] == "not_authenticated":
+            logger.error(f"YouTube auth unavailable before render: {auth_status['message']}")
+            return {
+                "status": "failed",
+                "error": f"YouTube not authenticated: {auth_status['message']}",
+            }
+
     mecca_time = get_mecca_time()
     logger.info(f"Mecca Time (UTC+3): {mecca_time.strftime('%Y-%m-%d %H:%M:%S')}")
     

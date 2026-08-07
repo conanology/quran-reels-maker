@@ -949,7 +949,13 @@ def cmd_growth_engine(args):
         print("📊 EXECUTION RESULT:")
         print(json.dumps(result, indent=2, ensure_ascii=False))
         print("="*70 + "\n")
-        
+
+        # execute_scheduled_slot converts every exception into a result dict, so
+        # without an explicit exit code a slot that posted nothing still reports
+        # success to GitHub Actions. 'suppressed' and 'dry_run' are not failures.
+        if result.get("status") == "failed":
+            sys.exit(1)
+
     elif args.ge_command == 'list':
         from core.growth_engine import get_mecca_time, get_slot_format
         import datetime
