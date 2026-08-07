@@ -34,8 +34,9 @@ class StyleConfig:
     page_font_size: int = 72
     page_words_per_line: int = 5
 
-    # Translation
-    translation_font_size: int = 36
+    # Translation. At 1080x1920 this is the only element a non-Arabic speaker can
+    # read, and 36px rendered ~4px wide in the feed - effectively invisible.
+    translation_font_size: int = 54
     translation_color: str = "#D0D8E0"
     translation_y_ratio: float = 0.68
 
@@ -59,10 +60,12 @@ class StyleConfig:
     # Crossfade between pages
     page_crossfade_duration: float = 0.5
 
-    # Background grading
-    background_brightness: float = 0.38
+    # Background grading. brightness and tint compound, so 0.38 with a 0.40 veil
+    # left roughly 23% of the original luminance - the footage was invisible and
+    # there was almost no detail left to encode.
+    background_brightness: float = 0.62
     background_tint: Tuple[int, int, int] = (5, 12, 25)
-    background_tint_opacity: float = 0.40
+    background_tint_opacity: float = 0.40  # peak of the gradient scrim, not flat
     ken_burns_zoom: float = 1.06
 
     # Timing

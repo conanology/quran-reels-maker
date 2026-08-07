@@ -18,9 +18,41 @@ from config.settings import (
 )
 from core.style_config import StyleConfig, DEFAULT_STYLE
 
+# Scrim shape: where the veil peaks vertically, how wide it spreads, and how much
+# of it survives at the very top and bottom of the frame.
+SCRIM_CENTER = 0.52
+SCRIM_SPREAD = 0.24
+SCRIM_EDGE_FLOOR = 0.30
+
 
 class BackgroundError(Exception):
     pass
+
+
+def _build_scrim_clip(style: StyleConfig, duration: float):
+    """
+    Vertical gradient scrim, densest across the middle band where the ayah sits
+    and easing off towards the edges so the footage keeps its highlights.
+    """
+    from moviepy.editor import ImageClip
+
+    height, width = style.video_height, style.video_width
+    y = np.linspace(0.0, 1.0, height)
+
+    # Gaussian centred on the text band, on a floor so edges stay slightly graded.
+    profile = SCRIM_EDGE_FLOOR + (1.0 - SCRIM_EDGE_FLOOR) * np.exp(
+        -((y - SCRIM_CENTER) ** 2) / (2 * SCRIM_SPREAD ** 2)
+    )
+    alpha = (profile * style.background_tint_opacity)[:, None] * np.ones((1, width))
+
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    rgb[:, :] = style.background_tint
+
+    return (
+        ImageClip(rgb)
+        .set_mask(ImageClip(alpha.astype(np.float32), ismask=True))
+        .set_duration(duration)
+    )
 
 
 def pick_random_background() -> Path:
@@ -138,18 +170,13 @@ def load_and_grade_background(
     # Darken
     bg_clip = bg_clip.fx(vfx.colorx, style.background_brightness)
 
-    # Blue tint overlay
+    # Tint overlay, weighted towards the text band. A flat full-frame veil dims
+    # highlights and text zone equally, which costs the footage its depth without
+    # buying legibility where it is actually needed.
     if style.background_tint_opacity > 0:
-        dark_overlay = (
-            ColorClip(
-                size=(style.video_width, style.video_height),
-                color=style.background_tint,
-            )
-            .set_opacity(style.background_tint_opacity)
-            .set_duration(total_duration)
-        )
+        scrim = _build_scrim_clip(style, total_duration)
         bg_with_grading = CompositeVideoClip(
-            [bg_clip, dark_overlay],
+            [bg_clip, scrim],
             size=(style.video_width, style.video_height),
         )
     else:
