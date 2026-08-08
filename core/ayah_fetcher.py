@@ -7,7 +7,7 @@ from loguru import logger
 
 from config.settings import RECITER_MAPPING_V4
 from core.quran_api import get_ayah_text, get_ayah_translation
-from core.quran_v4_api import get_verse_audio_with_timings, get_verse_words
+from core.quran_v4_api import get_verse_audio_with_timings
 from core.audio_processor import download_and_process_ayah
 
 
@@ -82,21 +82,13 @@ def fetch_single_ayah(
     word_segments: List[Dict[str, Any]] = []
     word_texts: List[Dict[str, Any]] = []
 
+    # Only the audio URL is used from here. Per-word timings for the rendered
+    # text come from core.word_timings, which queries an endpoint that still
+    # returns segments; fetching word text and estimating segments here as well
+    # cost an extra API call per ayah for a result nothing consumed.
     if v4_reciter_id:
         try:
-            audio_url, word_segments = get_verse_audio_with_timings(
-                v4_reciter_id, surah, ayah
-            )
-            if word_segments:
-                word_texts = get_verse_words(surah, ayah)
-                logger.debug(
-                    f"Got {len(word_segments)} segments and {len(word_texts)} words for {surah}:{ayah}"
-                )
-            else:
-                word_texts = get_verse_words(surah, ayah)
-                logger.info(
-                    f"V4 segments missing for {surah}:{ayah}, will use heuristic estimation."
-                )
+            audio_url, _ = get_verse_audio_with_timings(v4_reciter_id, surah, ayah)
         except Exception as e:
             logger.warning(f"V4 API failed for {surah}:{ayah}, falling back: {e}")
 
@@ -106,14 +98,6 @@ def fetch_single_ayah(
     )
 
     audio_duration = get_duration_fn(audio_path)
-
-    # Heuristic segmentation fallback
-    if not word_segments and word_texts:
-        logger.info(
-            f"Generating heuristic segments for Ayah {ayah} "
-            f"(Duration: {audio_duration:.2f}s, Words: {len(word_texts)})"
-        )
-        word_segments = build_heuristic_segments(word_texts, audio_duration)
 
     text = get_ayah_text(surah, ayah)
     text_with_marker = f"{text} ﴿{ayah}﴾"

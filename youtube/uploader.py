@@ -416,6 +416,21 @@ def check_video_status(video_id: str) -> Dict[str, Any]:
         return {'found': False, 'id': video_id, 'error': str(e)}
 
 
+def thumbnail_mimetype(thumbnail_path: Path) -> Optional[str]:
+    """
+    MIME type for a thumbnail, or None if YouTube will not accept it.
+
+    The type was hardcoded to image/jpeg while the documentary path writes PNG,
+    so those uploads were declared as the wrong format. thumbnails.set accepts
+    only JPEG and PNG - notably not WEBP.
+    """
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }.get(thumbnail_path.suffix.lower())
+
+
 def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, Any]]:
     """
     Upload a custom thumbnail for a YouTube video.
@@ -431,14 +446,22 @@ def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, 
     if not thumbnail_path.exists():
         logger.error(f"Thumbnail file not found: {thumbnail_path}")
         return None
-        
+
+    mimetype = thumbnail_mimetype(thumbnail_path)
+    if mimetype is None:
+        logger.error(
+            f"Unsupported thumbnail format '{thumbnail_path.suffix}'; "
+            f"YouTube accepts JPEG and PNG only"
+        )
+        return None
+
     try:
         service = get_authenticated_service()
         logger.info(f"Uploading custom thumbnail for video {video_id} from {thumbnail_path.name}...")
-        
+
         media = MediaFileUpload(
             str(thumbnail_path),
-            mimetype='image/jpeg'
+            mimetype=mimetype
         )
         
         request = service.thumbnails().set(

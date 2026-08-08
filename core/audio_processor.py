@@ -1,6 +1,7 @@
 """
 Audio Processor - Audio quality enhancements and ambient mixing
 """
+import math
 import os
 import random
 import shutil
@@ -104,6 +105,20 @@ def normalize_audio(audio_path: Path) -> Path:
         return audio_path
 
 
+def amplitude_ratio_to_db(ratio: float) -> float:
+    """
+    Convert an amplitude ratio to the dB gain pydub expects.
+
+    The previous expression, 20 * sqrt(ratio) subtracted from 20, is not a dB
+    conversion: at the default 0.12 it applied -13.07 dB (22% amplitude) rather
+    than the intended -18.42 dB, leaving the bed about 1.85x too loud under the
+    recitation.
+    """
+    if ratio <= 0:
+        return -120.0  # effectively silent
+    return 20.0 * math.log10(ratio)
+
+
 def get_ambient_sound(duration: float) -> Optional[Path]:
     """
     Get an ambient sound file, trimmed/looped to match duration.
@@ -142,9 +157,8 @@ def get_ambient_sound(duration: float) -> Optional[Path]:
         # Trim to exact duration
         ambient = ambient[:target_ms]
         
-        # Reduce volume
-        volume_db = 20 * (AMBIENT_VOLUME ** 0.5)  # Convert ratio to dB reduction
-        ambient = ambient - (20 - volume_db)  # Reduce volume significantly
+        # Reduce volume to AMBIENT_VOLUME of the original amplitude
+        ambient = ambient + amplitude_ratio_to_db(AMBIENT_VOLUME)
         
         # Add fade in/out
         ambient = ambient.fade_in(2000).fade_out(2000)

@@ -71,7 +71,6 @@ from core.text_renderer import (
     create_ayah_number_clip,
     create_surah_label,
     create_intro_frame,
-    create_accumulating_text_lines,
     compute_page_boundaries,
     split_translation_by_pages,
 )

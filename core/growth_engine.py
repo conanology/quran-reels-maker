@@ -72,6 +72,9 @@ RECITER_WEIGHTS = {
     }
 }
 
+# Stand-in for analytics rows whose source record never captured a reciter.
+UNKNOWN_RECITER_KEY = "unknown"
+
 # Module 5: Thumbnail visual prompts mapping
 THUMBNAIL_PROMPTS = {
     "Mosque Gold": "majestic mosque interior with gold outlines, arches, soft warm lighting, 16:9 landscape, cinematic nature scenery visible outside windows",
@@ -668,6 +671,13 @@ def ingest_video_analytics(
     Ingest performance metrics for an uploaded video into the analytics database.
     """
     from database.models import get_db_session, VideoAnalytics
+
+    # LongformHistory.reciter_key is nullable but VideoAnalytics.reciter_key is
+    # not, so an older compilation with no reciter recorded would otherwise
+    # raise IntegrityError and take the rest of its batch down with it.
+    if not (reciter_key or "").strip():
+        reciter_key = UNKNOWN_RECITER_KEY
+
     session = get_db_session()
     try:
         # Check if record already exists
@@ -968,18 +978,24 @@ def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
                     retention = existing_analytics.retention_rate if existing_analytics else 0.50
                     ctr = existing_analytics.ctr if existing_analytics else 0.05
                     
-                    ingest_video_analytics(
-                        video_id=vid_id,
-                        views=views,
-                        likes=likes,
-                        comments=comments,
-                        retention_rate=retention,
-                        ctr=ctr,
-                        surah=meta["surah"],
-                        reciter_key=meta["reciter_key"],
-                        video_type=meta["video_type"]
-                    )
-                    ingested_count += 1
+                    # Per-video, so one unusable row cannot discard the
+                    # statistics for the other 49 videos in this chunk.
+                    try:
+                        ingest_video_analytics(
+                            video_id=vid_id,
+                            views=views,
+                            likes=likes,
+                            comments=comments,
+                            retention_rate=retention,
+                            ctr=ctr,
+                            surah=meta["surah"],
+                            reciter_key=meta["reciter_key"],
+                            video_type=meta["video_type"]
+                        )
+                        ingested_count += 1
+                    except Exception as e:
+                        logger.error(f"Could not ingest metrics for {vid_id}: {e}")
+                        errors.append(f"{vid_id}: {e}")
             except Exception as e:
                 logger.error(f"Error querying statistics for chunk: {e}")
                 errors.append(str(e))
