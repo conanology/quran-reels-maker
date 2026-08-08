@@ -325,15 +325,20 @@ LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
 
 QURAN_V4_API_BASE = "https://api.quran.com/api/v4"
 
-# Map internal reciter keys to Quran.com V4 Reciter IDs
+# Map internal reciter keys to Quran.com V4 Reciter IDs.
+# These ids also select the audio file, so a wrong one publishes the wrong
+# reciter's voice under the right reciter's name. Verified against
+# /api/v4/resources/recitations; tests/test_reciter_mapping.py guards them.
+# banna, hudhaify and maher_muaiqly are absent upstream and have no timings.
 RECITER_MAPPING_V4 = {
-    "alafasy": 7,  # Mishary Rashid Alafasy
-    "abdul_basit_murattal": 2, # AbdulBaset AbdulSamad (Murattal)
-    "minshawi_mujawwad": 10, # Al-Minshawi (Mujawwad uses different ID?)
-    "husary": 5,   # Al-Husary
-    "shuraym": 6,  # Sa'ud ash-Shuraym
-    "sudais": 3,   # Abdur-Rahman as-Sudais
-    # Add others as needed, default to 7 if unknown
+    "abdul_basit_mujawwad": 1,   # AbdulBaset AbdulSamad (Mujawwad)
+    "abdul_basit_murattal": 2,   # AbdulBaset AbdulSamad (Murattal)
+    "sudais": 3,                 # Abdur-Rahman as-Sudais
+    "shaatree": 4,               # Abu Bakr al-Shatri
+    "husary": 6,                 # Mahmoud Khalil Al-Husary
+    "alafasy": 7,                # Mishari Rashid al-`Afasy
+    "minshawi_mujawwad": 8,      # Mohamed Siddiq al-Minshawi (Mujawwad)
+    "shuraym": 10,               # Sa`ud ash-Shuraym
 }
 
 # =============================================================================
