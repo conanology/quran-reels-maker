@@ -63,6 +63,7 @@ assets/downloaded_bg/*.mp4
 assets/downloaded_bg/ai_bg_*.jpg
 outputs/documentary/
 outputs/videos/preview_frames/
+outputs/videos/karaoke/
 assets/documentary/
 outputs/longform/downloads/
 outputs/longform/backgrounds/

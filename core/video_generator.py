@@ -59,6 +59,11 @@ from core.background import (
     pick_random_background,
     load_and_grade_background,
 )
+from core.word_timings import WordTimingError, get_word_timings
+
+# Intermediate per-word frames. Sits under the videos dir so the workflow's
+# existing render cleanup removes them.
+KARAOKE_DIR = VIDEOS_DIR / "karaoke"
 from core.ayah_fetcher import fetch_single_ayah
 from core.text_renderer import (
     create_text_clip,
@@ -125,6 +130,41 @@ def get_audio_duration_moviepy(audio_path: Path) -> float:
     except Exception as e:
         logger.error(f"Could not get duration for {audio_path}: {e}")
         return 5.0
+
+
+def _build_karaoke_clips(timing, display_duration, style, output_dir, prefix):
+    """
+    One clip per recited word, each holding until the next word begins.
+
+    Scheduling on the next word's start rather than this word's end avoids the
+    gaps that would otherwise appear between words, where no text would show.
+    """
+    from moviepy.editor import ImageClip
+
+    from core.karaoke_renderer import KaraokeStyle, render_word_states
+
+    karaoke_style = KaraokeStyle(
+        font_path=Path(style.font_path),
+        font_size=style.page_font_size,
+        width=style.video_width,
+        height=style.video_height,
+    )
+    paths = render_word_states(timing.words, output_dir, karaoke_style, prefix=prefix)
+    spans = timing.spans_seconds()
+
+    clips = []
+    for index, (path, (start, _end)) in enumerate(zip(paths, spans)):
+        if start >= display_duration:
+            break
+        next_start = (
+            spans[index + 1][0] if index + 1 < len(spans) else display_duration
+        )
+        duration = min(next_start, display_duration) - start
+        if duration <= 0:
+            continue
+        clips.append(ImageClip(str(path)).set_duration(duration).set_start(start))
+
+    return clips
 
 
 def generate_reel(
@@ -287,22 +327,39 @@ def generate_reel(
     for data in ayah_data:
         display_duration = data["end_time"] - data["start_time"]
 
-        # Arabic text (accumulating or static)
-        if data.get("word_segments") and data.get("word_texts"):
-            logger.info(f"Creating dynamic accumulating text for Ayah {data['ayah']}")
-            text_clip = create_accumulating_text_lines(
-                data["word_segments"],
-                data["word_texts"],
+        # Arabic text: highlight each word as it is recited when real per-word
+        # timings exist, otherwise show the whole ayah for its duration.
+        timing = None
+        try:
+            timing = get_word_timings(reciter_key, surah, data["ayah"])
+        except WordTimingError as e:
+            logger.warning(f"No usable word timings for ayah {data['ayah']}: {e}")
+
+        karaoke_clips = []
+        if timing:
+            karaoke_clips = _build_karaoke_clips(
+                timing,
                 display_duration,
-                style=style,
+                style,
+                KARAOKE_DIR,
+                prefix=f"{surah}_{data['ayah']}",
             )
+
+        if karaoke_clips:
+            logger.info(
+                f"Word-synced text for ayah {data['ayah']}: {len(karaoke_clips)} words"
+            )
+            for clip in karaoke_clips:
+                clip = clip.set_start(data["start_time"] + clip.start)
+                text_clips.append(clip)
         else:
             text_clip = create_text_clip(data["text"], display_duration, style=style)
-
-        if text_clip:
-            text_clip = text_clip.set_start(data["start_time"])
-            text_clip = text_clip.crossfadein(style.text_fade_in).crossfadeout(style.text_fade_out)
-            text_clips.append(text_clip)
+            if text_clip:
+                text_clip = text_clip.set_start(data["start_time"])
+                text_clip = text_clip.crossfadein(style.text_fade_in).crossfadeout(
+                    style.text_fade_out
+                )
+                text_clips.append(text_clip)
 
         # Ayah number
         if data["ayah"] > 0:
@@ -312,38 +369,9 @@ def generate_reel(
                 ayah_num_clip = ayah_num_clip.crossfadein(0.3).crossfadeout(0.3)
                 text_clips.append(ayah_num_clip)
 
-        # Translation - synced to pages if word segments available
-        if data.get("translation"):
-            if data.get("word_segments") and data.get("word_texts"):
-                # Synced translation: split across pages
-                word_count = len(data["word_texts"])
-                sorted_segs = sorted(data["word_segments"], key=lambda x: x["start_ms"])
-                pages = compute_page_boundaries(
-                    sorted_segs, word_count, display_duration, style.page_size
-                )
-                trans_segments = split_translation_by_pages(
-                    data["translation"], pages, word_count
-                )
-                for page, trans_text in zip(pages, trans_segments):
-                    if not trans_text.strip():
-                        continue
-                    page_dur = page["end_time"] - page["start_time"]
-                    if page_dur < 0.1:
-                        page_dur = 0.1
-                    tc = create_translation_clip(trans_text, page_dur, style=style)
-                    if tc:
-                        tc = tc.set_start(data["start_time"] + page["start_time"])
-                        tc = tc.crossfadein(style.text_fade_in).crossfadeout(style.text_fade_out)
-                        text_clips.append(tc)
-            else:
-                # Static translation for whole ayah
-                trans_clip = create_translation_clip(
-                    data["translation"], display_duration, style=style
-                )
-                if trans_clip:
-                    trans_clip = trans_clip.set_start(data["start_time"])
-                    trans_clip = trans_clip.crossfadein(style.text_fade_in).crossfadeout(style.text_fade_out)
-                    text_clips.append(trans_clip)
+        # The English translation is deliberately not rendered. Arabic and
+        # English word order differ, so it cannot follow the recitation, and a
+        # long verse filled the frame. It lives in the video description instead.
 
     # Surah label
     surah_label = create_surah_label(surah_name, total_duration, style=style)
