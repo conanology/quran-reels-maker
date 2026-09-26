@@ -23,7 +23,8 @@ def has_people(video_path: Path, num_frames: int = 5) -> bool:
     Check whether a video contains visible people.
     Samples `num_frames` evenly spaced frames and runs HOG detection.
     Returns True if people detected in ANY frame.
-    Returns False if detection is unavailable or on error (conservative).
+    Compatibility boolean only; False is not evidence that inspection succeeded.
+    Call inspect_people for review/provenance decisions.
     """
     if not DETECTION_AVAILABLE:
         return False
@@ -75,3 +76,17 @@ def _detect_people_in_frame(frame: np.ndarray) -> bool:
         if weight > 0.3:
             return True
     return False
+
+
+def inspect_people(video_path: Path, num_frames: int = 5) -> dict:
+    """Expose unavailable/unreadable detection instead of asserting people-free."""
+    if not DETECTION_AVAILABLE:
+        return {"status": "unchecked", "reason": "Detector unavailable"}
+    try:
+        frames = _extract_frames(Path(video_path), num_frames)
+        if not frames:
+            return {"status": "unchecked", "reason": "No readable frames"}
+        return {"status": "people_detected" if any(_detect_people_in_frame(frame) for frame in frames) else "sampled_no_people",
+                "sampled_frames": len(frames), "full_content_verified": False}
+    except Exception:
+        return {"status": "unchecked", "reason": "Detector failed"}

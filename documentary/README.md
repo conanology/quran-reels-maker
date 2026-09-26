@@ -1,0 +1,7 @@
+# Documentary helpers — incomplete feature
+
+Episode generation and publishing are unavailable (`documentary.AVAILABLE=False`). No script/API client/model/media manifest/approval pipeline is shipped, and no active CLI/workflow exposes one. `require_available()` always reports the missing components; a configuration flag cannot enable an unfinished pipeline.
+
+The existing files are reusable offline planning, text-overlay, stock-provenance, quality and cost helpers. Their import/config errors are repaired. Quran reference resolution uses the text API and rejects incomplete/out-of-order text or translations rather than issuing a full-range payload. Quality checks reject absent final audio and unavailable people/black/freeze checks. Stock cache reuse requires a source sidecar and matching digest, and new downloads are bounded, written temporarily, screened and atomically promoted. Costs distinguish cache hits, paid events and unknown pricing; concurrent episodes require separate trackers.
+
+These helpers do not establish content readiness. Before adding an episode entry point, require a source/audio/text/verse manifest, qualified content review, provenance, complete stream/duration validation, verified before-call cost reservations, job-owned files, and publishing/approval gates. The current cost tracker records declared estimates; it does not make or authorize paid API calls. Missing functionality is explicitly unavailable rather than implemented as invented placeholder behavior.

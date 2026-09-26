@@ -23,6 +23,8 @@ import json
 import shutil
 import datetime
 import re
+import tempfile
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Tuple
 
@@ -53,6 +55,9 @@ from config.settings import (
 )
 from core.ayah_fetcher import fetch_single_ayah
 from core.audio_processor import get_audio_duration, cleanup_audio_files
+from core.utils import file_sha256, verify_media_streams, write_media_manifest
+from core.runtime_safety import atomic_write_json, exclusive_lock
+from core.asset_provenance import get_asset_provenance
 from core.ai_brain import generate_longform_video_metadata
 from longform.thumbnail_generator import generate_longform_thumbnail
 
@@ -118,21 +123,15 @@ def to_arabic_digits(num: int) -> str:
 
 
 def _clean_arabic(text: str) -> str:
-    """Strip small Uthmani marks that may render incorrectly in some fonts."""
-    # Uthmani-specific marks (U+06D6–U+06ED)
-    import re
-    uthmani_strip_re = re.compile("[\u06D6-\u06ED]")
-    return uthmani_strip_re.sub("", text)
+    """Preserve Quran source marks in every format."""
+    return text
 
 
 def _load_font(font_path: Path, size: int) -> ImageFont.FreeTypeFont:
     """Load a TrueType font with fallbacks."""
     if font_path.exists():
         return ImageFont.truetype(str(font_path), size)
-    try:
-        return ImageFont.truetype("Arial", size)
-    except OSError:
-        return ImageFont.load_default()
+    raise RuntimeError(f"Required Arabic font is missing: {font_path}")
 
 
 def _generate_text_overlay(
@@ -199,8 +198,8 @@ def _generate_text_overlay(
         return lines
 
     # 5. Iterative wrap and scale algorithm
-    max_w = 1200
-    max_h = 450
+    max_w = int(width * 0.80)
+    max_h = int(height * 0.60)
     max_lines = 4
 
     font_size = 72
@@ -221,15 +220,13 @@ def _generate_text_overlay(
             
         total_text_h = sum(h for w, h in line_sizes) + int(font_size * 0.25) * (len(wrapped_lines) - 1)
         
-        if total_text_h <= max_h and len(wrapped_lines) <= max_lines:
+        if total_text_h <= max_h and all(w <= max_w for w, h in line_sizes):
             final_lines = wrapped_lines
             final_line_sizes = line_sizes
             break
             
         if font_size == min_font_size:
-            final_lines = wrapped_lines
-            final_line_sizes = line_sizes
-            break
+            raise RuntimeError("Complete Quran verse cannot fit at a readable font size")
             
         font_size -= 4
 
@@ -388,19 +385,15 @@ def _render_ayah_segment(
     # Build filter complex
     filter_complex = (
         # Background: scale to cover 1920x1080, crop center, apply color grade and zoompan
-        f"[0:v]scale=1920:-1,crop=1920:1080:(in_w-1920)/2:(in_h-1080)/2{color_filter}{zoom_filter}[bg_raw]; "
+        f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080{color_filter}{zoom_filter}[bg_raw]; "
         # Dark overlay
         f"color=black@{overlay_opacity}:s=1920x1080:d={total_duration}[dark]; "
-        f"[bg_raw][dark]overlay=0:0[bg]; "
+        f"[bg_raw][dark]overlay=0:0,fade=t=in:st=0:d={fade_in},"
+        f"fade=t=out:st={max(0, total_duration - fade_out)}:d={fade_out}[bg]; "
         # Overlay the transparent PNG text overlay (input 2)
-        f"[bg][2:v]overlay=0:0[v_raw]; "
-        # Audio fade in/out on the video stream (gentle)
-        f"[v_raw]fade=t=in:st=0:d={fade_in},"
-        f"fade=t=out:st={total_duration - fade_out}:d={fade_out}[v]; "
-        # Audio: pad silence for padding_after, then fade
-        f"[1:a]apad=pad_dur={padding_after},"
-        f"afade=t=in:st=0:d={min(fade_in, 0.1)},"
-        f"afade=t=out:st={audio_duration - 0.1}:d={min(fade_out, 0.2)}[a]"
+        f"[bg][2:v]overlay=0:0[v]; "
+        # Padding preserves the complete unattenuated recitation.
+        f"[1:a]apad=pad_dur={padding_after}[a]"
     )
 
     cmd = [
@@ -422,17 +415,15 @@ def _render_ayah_segment(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    # Cleanup temp overlay PNG
     try:
-        os.remove(overlay_png_path)
-    except Exception:
-        pass
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=min(1800, max(60, total_duration * 15)))
+    finally:
+        Path(overlay_png_path).unlink(missing_ok=True)
 
     if result.returncode != 0:
         logger.error(f"FFmpeg segment render error:\n{result.stderr[-3000:]}")
         raise RuntimeError(f"FFmpeg failed rendering ayah {ayah_num}")
+    verify_media_streams(Path(output_path), total_duration, LONGFORM_WIDTH, LONGFORM_HEIGHT)
 
     return total_duration
 
@@ -453,6 +444,21 @@ def generate_longform(
     loop_count: int = 1,
     thumbnail_template: Optional[str] = None,
     custom_bg_prompt: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Keep temporary assets private to this job, including on failed coverage."""
+    LONGFORM_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    LONGFORM_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="longform_", dir=LONGFORM_TEMP_DIR) as name:
+        return _generate_longform(surah_start, surah_end, reciter_key, background_path,
+            output_filename, compilation_styles, ayah_padding, transition_duration,
+            progress_callback, ayah_start, ayah_end, loop_count, thumbnail_template,
+            custom_bg_prompt, Path(name))
+
+
+def _generate_longform(
+    surah_start, surah_end, reciter_key, background_path, output_filename,
+    compilation_styles, ayah_padding, transition_duration, progress_callback,
+    ayah_start, ayah_end, loop_count, thumbnail_template, custom_bg_prompt, job_dir,
 ) -> Dict[str, Any]:
     """
     Generate a complete long-form 16:9 Quran video from scratch.
@@ -480,7 +486,23 @@ def generate_longform(
     Returns:
         Dict with output_path, duration, chapters, description, title, etc.
     """
-    # Validate
+    # Validate before fetching or rendering any content.
+    if not isinstance(surah_start, int) or not isinstance(surah_end, int) or not 1 <= surah_start <= surah_end <= 114:
+        raise ValueError("Invalid surah range")
+    if reciter_key not in RECITERS:
+        raise ValueError(f"Unknown reciter: {reciter_key}")
+    if not isinstance(loop_count, int) or isinstance(loop_count, bool) or not 1 <= loop_count <= 20:
+        raise ValueError("Loop count must be between 1 and 20")
+    for value in (ayah_padding, transition_duration):
+        if not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 10:
+            raise ValueError("Padding and transition must be finite between 0 and 10 seconds")
+    for verse, surah in ((ayah_start, surah_start), (ayah_end, surah_end)):
+        if verse is not None and (not isinstance(verse, int) or isinstance(verse, bool) or not 1 <= verse <= VERSE_COUNTS[surah]):
+            raise ValueError("Verse range is outside its surah")
+    if surah_start == surah_end and (ayah_start or 1) > (ayah_end or VERSE_COUNTS[surah_start]):
+        raise ValueError("Verse start must not exceed verse end")
+    if output_filename is not None and (Path(output_filename).name != output_filename or not output_filename.lower().endswith(".mp4")):
+        raise ValueError("Output filename must be an MP4 basename")
     for s in range(surah_start, surah_end + 1):
         if s not in VERSE_COUNTS:
             raise ValueError(f"Invalid surah number: {s}")
@@ -503,12 +525,8 @@ def generate_longform(
     )
     logger.info(f"Encoder: {DETECTED_ENCODER}")
 
-    # Prepare temp directory
-    shutil.rmtree(str(LONGFORM_TEMP_DIR), ignore_errors=True)
-    LONGFORM_TEMP_DIR.mkdir(parents=True, exist_ok=True)
-
     # Audio temp directory
-    audio_temp = LONGFORM_TEMP_DIR / "audio"
+    audio_temp = job_dir / "audio"
     audio_temp.mkdir(exist_ok=True)
 
     thumbnail_bg_image_path = None
@@ -542,7 +560,7 @@ def generate_longform(
 
     # Extract frame from video background for thumbnail if we don't have a direct image
     if background_path and not thumbnail_bg_image_path:
-        extracted_jpg = LONGFORM_TEMP_DIR / f"extracted_thumb_bg_{int(datetime.datetime.now().timestamp())}.jpg"
+        extracted_jpg = job_dir / "thumbnail_background.jpg"
         logger.info(f"Extracting thumbnail background frame from video: {Path(background_path).name}")
         extract_cmd = [
             "ffmpeg", "-y",
@@ -552,7 +570,7 @@ def generate_longform(
             str(extracted_jpg)
         ]
         try:
-            result = subprocess.run(extract_cmd, capture_output=True, text=True)
+            result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=30)
             if result.returncode == 0 and extracted_jpg.exists():
                 thumbnail_bg_image_path = extracted_jpg
                 is_extracted_bg = True
@@ -566,6 +584,11 @@ def generate_longform(
     # Process all ayahs
     processed_segments = []
     rendered_info = []  # list of (surah_num, seg_duration)
+    verse_manifest = []
+    expected_verses = [(s, a) for s in range(surah_start, surah_end + 1)
+                       for a in range(ayah_start if s == surah_start and ayah_start is not None else 1,
+                                      (ayah_end if s == surah_end and ayah_end is not None else VERSE_COUNTS[s]) + 1)]
+    total_ayahs = len(expected_verses)
     accumulated_time = 0.0
     current_ayah_idx = 0
     style_idx = 0
@@ -610,8 +633,7 @@ def generate_longform(
                 if not first_translation:
                     first_translation = ayah_data.get("translation", "")
             except Exception as e:
-                logger.error(f"Failed to fetch ayah {surah_num}:{ayah_num}: {e}")
-                continue
+                raise RuntimeError(f"Incomplete coverage: failed to fetch {surah_num}:{ayah_num}") from e
 
             # Get segment style
             style = {}
@@ -630,7 +652,7 @@ def generate_longform(
             seg_padding = 1.5 if is_surah_end else ayah_padding
 
             # Render segment
-            seg_output = LONGFORM_TEMP_DIR / f"seg_{current_ayah_idx:05d}.mp4"
+            seg_output = job_dir / f"seg_{current_ayah_idx:05d}.mp4"
 
             try:
                 seg_duration = _render_ayah_segment(
@@ -653,6 +675,12 @@ def generate_longform(
                 processed_segments.append(str(seg_output))
                 rendered_info.append((surah_num, seg_duration))
                 accumulated_time += seg_duration
+                verse_manifest.append({"surah": surah_num, "ayah": ayah_num,
+                    "text": ayah_data["text"],
+                    "reciter_key": reciter_key, "recording_url": ayah_data["recording_url"],
+                    "source": ayah_data["audio_source"], "audio_duration": ayah_data["audio_duration"],
+                    "text_source": ayah_data["text_source"], "timing_source": ayah_data["timing_source"],
+                    "audio_sha256": file_sha256(ayah_data["audio_path"]), "segment_duration": seg_duration})
 
                 logger.debug(
                     f"  Ayah {ayah_num}: {ayah_data['audio_duration']:.1f}s audio, "
@@ -660,22 +688,21 @@ def generate_longform(
                 )
 
             except Exception as e:
-                logger.error(f"Failed to render ayah {surah_num}:{ayah_num}: {e}")
-                continue
+                raise RuntimeError(f"Incomplete coverage: failed to render {surah_num}:{ayah_num}") from e
 
             # Safety: check if we're hitting the max duration
             if accumulated_time > LONGFORM_MAX_DURATION:
-                logger.warning(
-                    f"Reached max duration ({LONGFORM_MAX_DURATION}s). "
-                    f"Stopping at {surah_num}:{ayah_num}."
-                )
-                break
+                raise RuntimeError("Complete requested coverage exceeds the longform duration limit")
 
         if accumulated_time > LONGFORM_MAX_DURATION:
             break
 
     if not processed_segments:
         raise RuntimeError("No segments were rendered successfully")
+    if [(v["surah"], v["ayah"]) for v in verse_manifest] != expected_verses:
+        raise RuntimeError("Rendered verse manifest does not match requested coverage")
+    if accumulated_time * loop_count > LONGFORM_MAX_DURATION:
+        raise RuntimeError("Complete repeated coverage exceeds the longform duration limit")
 
     # Build chapters and compute final accumulated time based on loop_count
     chapters = []
@@ -717,16 +744,16 @@ def generate_longform(
     if progress_callback:
         progress_callback(total_ayahs, total_ayahs, "Concatenating final video...")
 
-    concat_file = LONGFORM_TEMP_DIR / "concat_list.txt"
+    concat_file = job_dir / "concat_list.txt"
     with open(concat_file, "w", encoding="utf-8") as f:
         for _ in range(loop_count):
             for path in processed_segments:
-                escaped = path.replace("\\", "/")
+                escaped = path.replace("\\", "/").replace("'", "'\\''")
                 f.write(f"file '{escaped}'\n")
 
     # Generate output filename
     if output_filename is None:
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         loop_str = f"_loop{loop_count}" if loop_count > 1 else ""
         if surah_start == surah_end:
             name_en = SURAH_NAMES_EN[surah_start - 1]
@@ -750,15 +777,19 @@ def generate_longform(
         str(final_output),
     ]
 
-    result = subprocess.run(concat_cmd, capture_output=True, text=True)
+    with exclusive_lock(Path(str(final_output) + ".lock")):
+        if final_output.exists():
+            raise FileExistsError(f"Refusing to overwrite completed media: {final_output.name}")
+        result = subprocess.run(concat_cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         logger.error(f"FFmpeg concat error:\n{result.stderr[-2000:]}")
         raise RuntimeError(f"FFmpeg concat failed (exit code {result.returncode})")
+    streams = verify_media_streams(final_output, accumulated_time, LONGFORM_WIDTH, LONGFORM_HEIGHT)
 
     # Build metadata
     # Fetch AI-generated metadata
     ai_meta = {}
-    if first_translation:
+    if first_translation and os.getenv("ALLOW_AI_RELIGIOUS_METADATA", "false").lower() == "true":
         try:
             logger.info("Generating dynamic AI metadata for longform video...")
             ai_meta = generate_longform_video_metadata(
@@ -816,7 +847,8 @@ def generate_longform(
     if ai_tags:
         tags = ai_tags
     else:
-        tags = _build_tags(surah_start, surah_end, reciter_name_ar, reciter_name_en)
+        tags = _build_tags(surah_start, surah_end, reciter_name_ar, reciter_name_en,
+            full_coverage=(ayah_start in (None, 1) and ayah_end in (None, VERSE_COUNTS[surah_end])))
 
     # Generate thumbnail
     thumbnail_path = final_output.with_suffix(".jpg")
@@ -856,12 +888,21 @@ def generate_longform(
         "description": description,
         "recommended_title": recommended_title,
         "tags": tags,
+        "coverage_complete": True,
+        "domain_review_required": True,
+        "manifest_path": str(final_output) + ".manifest.json",
     }
+    coverage = [{"surah": s, "start_ayah": min(v["ayah"] for v in verse_manifest if v["surah"] == s),
+                 "end_ayah": max(v["ayah"] for v in verse_manifest if v["surah"] == s)}
+                for s in range(surah_start, surah_end + 1)]
+    write_media_manifest(final_output, {"format": "longform", "reciter_key": reciter_key,
+        "coverage": coverage, "verses": verse_manifest, "loop_count": loop_count,
+        "duration_seconds": accumulated_time, "streams": streams,
+        "background": get_asset_provenance(Path(background_path)), "domain_review_required": True})
 
     # Save metadata JSON
     meta_path = str(final_output) + ".json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    atomic_write_json(Path(meta_path), metadata)
 
     # Cleanup temp files (keep audio cache for potential re-renders)
     for seg in processed_segments:
@@ -940,7 +981,7 @@ def _build_description(
         "═══════════════════════════════",
         "",
         "#Quran #القرآن_الكريم #QuranRecitation #تلاوة_القرآن #Islam",
-        "#تلاوة_خاشعة #قرآن_كريم #QuranFull #QuranListening #Islamic",
+        "#تلاوة_خاشعة #قرآن_كريم #QuranListening #Islamic",
         f"#{reciter_en.replace(' ', '')} #QuranBeautiful",
         "",
         "📌 Subscribe for daily Quran Shorts and weekly full-surah recitations!",
@@ -957,16 +998,18 @@ def _build_tags(
     surah_end: int,
     reciter_ar: str,
     reciter_en: str,
+    full_coverage: bool = True,
 ) -> List[str]:
     """Build YouTube tags list."""
     tags = [
         "Quran", "القرآن الكريم", "Islam", "إسلام",
         "Quran Recitation", "تلاوة القرآن",
-        "Quran Full", "تلاوة كاملة",
         reciter_ar, reciter_en,
         "Islamic", "QuranListening",
         "تلاوة خاشعة", "قرآن كريم",
     ]
+    if full_coverage:
+        tags.extend(["Quran Full", "تلاوة كاملة"])
 
     for s in range(surah_start, min(surah_end + 1, surah_start + 5)):
         tags.append(f"Surah {SURAH_NAMES_EN[s - 1]}")

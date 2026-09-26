@@ -22,6 +22,9 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+class QualityCheckUnavailable(RuntimeError):
+    """A required quality check did not run successfully."""
+
 _BLACK_RE = re.compile(
     r"black_start:(?P<start>[0-9.]+)\s+black_end:(?P<end>[0-9.]+)\s+black_duration:(?P<dur>[0-9.]+)"
 )
@@ -52,6 +55,7 @@ def _run_json_command(args: list[str]) -> dict[str, Any] | None:
             check=True,
             encoding="utf-8",
             errors="replace",
+            timeout=30,
         )
         return json.loads(cp.stdout)
     except Exception as exc:
@@ -96,10 +100,14 @@ def detect_black_segments(path: Path, *, pic_th: float = 0.98, min_dur: float = 
             encoding="utf-8",
             errors="replace",
             check=False,
+            timeout=300,
         )
     except Exception as exc:
         logger.debug("blackdetect unavailable for %s: %s", path, exc)
-        return []
+        raise QualityCheckUnavailable("Black-frame detection did not run.") from exc
+
+    if cp.returncode:
+        raise QualityCheckUnavailable("Black-frame detection failed.")
 
     text = (cp.stdout or "") + "\n" + (cp.stderr or "")
     segments = []
@@ -135,10 +143,14 @@ def detect_freeze_segments(path: Path, *, noise: float = 0.002, min_dur: float =
             encoding="utf-8",
             errors="replace",
             check=False,
+            timeout=300,
         )
     except Exception as exc:
         logger.debug("freezedetect unavailable for %s: %s", path, exc)
-        return []
+        raise QualityCheckUnavailable("Freeze detection did not run.") from exc
+
+    if cp.returncode:
+        raise QualityCheckUnavailable("Freeze detection failed.")
 
     text = (cp.stdout or "") + "\n" + (cp.stderr or "")
     starts = [float(m.group("start")) for m in _FREEZE_START_RE.finditer(text)]
@@ -152,31 +164,34 @@ def detect_freeze_segments(path: Path, *, noise: float = 0.002, min_dur: float =
     return segs
 
 
-def _image_has_people_best_effort(path: Path) -> bool:
+def _image_has_people_best_effort(path: Path) -> bool | None:
     """Best-effort image people detection using existing HOG detector if available."""
     try:
         import cv2
         from core import person_detector as pd
 
         if not getattr(pd, "DETECTION_AVAILABLE", False):
-            return False
+            return None
         frame = cv2.imread(str(path))
         if frame is None:
-            return False
+            return None
         return bool(pd._detect_people_in_frame(frame))  # reuse existing detector
     except Exception as exc:
         logger.debug("Image person detection failed for %s: %s", path, exc)
-        return False
+        return None
 
 
-def _video_has_people_best_effort(path: Path) -> bool:
+def _video_has_people_best_effort(path: Path) -> bool | None:
     try:
-        from core.person_detector import has_people
+        from core.person_detector import has_people, DETECTION_AVAILABLE
+
+        if not DETECTION_AVAILABLE:
+            return None
 
         return bool(has_people(Path(path), num_frames=5))
     except Exception as exc:
         logger.debug("Video person detection failed for %s: %s", path, exc)
-        return False
+        return None
 
 
 def validate_image_asset(path: Path) -> ValidationResult:
@@ -189,8 +204,10 @@ def validate_image_asset(path: Path) -> ValidationResult:
         return ValidationResult(False, "image", str(path), ["file_missing"], [], {})
 
     try:
-        img = Image.open(path).convert("RGB")
-        arr = np.array(img)
+        with Image.open(path) as source:
+            img = source.convert("RGB")
+            arr = np.array(img)
+            img.close()
         metrics["width"] = int(arr.shape[1])
         metrics["height"] = int(arr.shape[0])
         metrics["mean_luma"] = float(arr.mean())
@@ -205,13 +222,16 @@ def validate_image_asset(path: Path) -> ValidationResult:
     if metrics["max_pixel"] <= 5 or metrics["mean_luma"] < 2.0:
         reasons.append("image_near_black")
 
-    if _image_has_people_best_effort(path):
+    people = _image_has_people_best_effort(path)
+    if people is None:
+        reasons.append("people_check_unavailable_requires_review")
+    elif people:
         reasons.append("people_detected")
 
     return ValidationResult(not reasons, "image", str(path), reasons, warnings, metrics)
 
 
-def validate_video_asset(path: Path, *, allow_intro_outro_black: bool = False) -> ValidationResult:
+def validate_video_asset(path: Path, *, allow_intro_outro_black: bool = False, require_audio: bool = False) -> ValidationResult:
     path = Path(path)
     reasons: list[str] = []
     warnings: list[str] = []
@@ -241,10 +261,19 @@ def validate_video_asset(path: Path, *, allow_intro_outro_black: bool = False) -
         reasons.append("missing_video_stream")
         return ValidationResult(False, "video", str(path), reasons, warnings, metrics)
 
+    if require_audio and not astream:
+        reasons.append("missing_audio_stream")
+    if metrics["width"] < 320 or metrics["height"] < 180:
+        reasons.append("video_too_small")
+
     if metrics["duration"] < 1.0:
         reasons.append("duration_too_short")
 
-    black_segments = detect_black_segments(path)
+    try:
+        black_segments = detect_black_segments(path)
+    except QualityCheckUnavailable:
+        black_segments = []
+        reasons.append("black_check_unavailable")
     metrics["black_segments"] = black_segments
     total_black = sum(s["duration"] for s in black_segments)
     metrics["black_total_s"] = round(total_black, 3)
@@ -263,10 +292,17 @@ def validate_video_asset(path: Path, *, allow_intro_outro_black: bool = False) -
         if metrics["black_ratio"] > 0.90:
             reasons.append("video_effectively_all_black")
 
-    if _video_has_people_best_effort(path):
+    people = _video_has_people_best_effort(path)
+    if people is None:
+        reasons.append("people_check_unavailable_requires_review")
+    elif people:
         reasons.append("people_detected")
 
-    freeze_segments = detect_freeze_segments(path)
+    try:
+        freeze_segments = detect_freeze_segments(path)
+    except QualityCheckUnavailable:
+        freeze_segments = []
+        reasons.append("freeze_check_unavailable")
     metrics["freeze_segments"] = freeze_segments
     total_freeze = sum(s["duration"] for s in freeze_segments)
     metrics["freeze_total_s"] = round(total_freeze, 3)
@@ -294,7 +330,9 @@ def validate_visual_asset(path: Path) -> ValidationResult:
 
 
 def validate_final_video(path: Path) -> ValidationResult:
-    return validate_video_asset(path, allow_intro_outro_black=True)
+    result = validate_video_asset(path, allow_intro_outro_black=True, require_audio=True)
+    result.warnings.append("Quran_audio_text_manifest_and_source_provenance_require_separate_review")
+    return result
 
 
 def build_episode_quality_report(episode_dir: Path) -> dict[str, Any]:

@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from loguru import logger
 
 from core.utils import retry_with_backoff
+from core.runtime_safety import atomic_write_json, exclusive_lock
 from config.settings import (
     QURAN_TEXT_API,
     VERSE_COUNTS,
@@ -36,7 +37,8 @@ def _load_cache():
     if CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                _cache = json.load(f)
+                data = json.load(f)
+                _cache = data if isinstance(data, dict) else {}
             logger.debug(f"Loaded {len(_cache)} cached entries")
         except Exception as e:
             logger.warning(f"Could not load cache: {e}")
@@ -46,13 +48,21 @@ def _save_cache():
     """Save cache to disk"""
     try:
         DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(_cache, f, ensure_ascii=False, indent=2)
+        with exclusive_lock(Path(str(CACHE_FILE) + ".lock")):
+            stored = {}
+            if CACHE_FILE.exists():
+                try:
+                    stored = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+                    if not isinstance(stored, dict):
+                        stored = {}
+                except (OSError, ValueError):
+                    stored = {}
+            stored.update(_cache)
+            atomic_write_json(CACHE_FILE, stored)
     except Exception as e:
         logger.warning(f"Could not save cache: {e}")
 
-# Load cache on module import
-_load_cache()
+# Cache loads happen on demand; importing API helpers never reads live data.
 
 
 @retry_with_backoff(max_retries=3, exceptions=(RequestException, QuranAPIError))
@@ -70,8 +80,12 @@ def get_ayah_text(surah: int, ayah: int) -> str:
     Raises:
         QuranAPIError: If the API request fails
     """
-    # Check cache first
-    cache_key = f"text:{surah}:{ayah}"
+    if surah not in VERSE_COUNTS or not isinstance(ayah, int) or not 1 <= ayah <= VERSE_COUNTS[surah]:
+        raise QuranAPIError("Verse reference is outside the Quran")
+    # Versioned keys avoid trusting pre-validation cache entries.
+    cache_key = f"text_v2:{surah}:{ayah}"
+    if not _cache:
+        _load_cache()
     if cache_key in _cache:
         return _cache[cache_key]
     
@@ -83,7 +97,12 @@ def get_ayah_text(surah: int, ayah: int) -> str:
         data = response.json()
         
         if data.get("code") == 200 and "data" in data:
-            text = data["data"]["text"]
+            verse = data["data"]
+            if verse.get("surah", {}).get("number") != surah or verse.get("numberInSurah") != ayah:
+                raise QuranAPIError("Text response identifies a different verse")
+            text = verse.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise QuranAPIError("Quran text is empty")
             # Cache the result
             _cache[cache_key] = text
             _save_cache()
@@ -107,7 +126,6 @@ TRANSLATION_EDITIONS = {
 }
 
 
-@retry_with_backoff(max_retries=2, exceptions=(RequestException,))
 def get_ayah_translation(surah: int, ayah: int, language: str = "en") -> Optional[str]:
     """
     Fetch the translation of a specific ayah.
@@ -120,8 +138,13 @@ def get_ayah_translation(surah: int, ayah: int, language: str = "en") -> Optiona
     Returns:
         The translated text, or None if translation fails
     """
-    # Check cache first
-    cache_key = f"trans:{language}:{surah}:{ayah}"
+    if surah not in VERSE_COUNTS or not isinstance(ayah, int) or not 1 <= ayah <= VERSE_COUNTS[surah]:
+        raise QuranAPIError("Translation reference is outside the Quran")
+    if language not in TRANSLATION_EDITIONS:
+        raise ValueError(f"Unsupported translation language: {language}")
+    if not _cache:
+        _load_cache()
+    cache_key = f"trans_v2:{language}:{surah}:{ayah}"
     if cache_key in _cache:
         return _cache[cache_key]
     
@@ -134,7 +157,12 @@ def get_ayah_translation(surah: int, ayah: int, language: str = "en") -> Optiona
         data = response.json()
         
         if data.get("code") == 200 and "data" in data:
-            text = data["data"]["text"]
+            verse = data["data"]
+            if verse.get("surah", {}).get("number") != surah or verse.get("numberInSurah") != ayah:
+                raise QuranAPIError("Translation response identifies a different verse")
+            text = verse.get("text")
+            if not isinstance(text, str) or not text.strip():
+                return None
             # Cache the result
             _cache[cache_key] = text
             _save_cache()
@@ -205,6 +233,8 @@ def get_surah_name(surah: int, language: str = "ar") -> str:
         Surah name in the requested language
     """
     index = surah - 1
+    if surah not in VERSE_COUNTS:
+        raise ValueError("Invalid surah number")
     if language == "ar":
         return SURAH_NAMES_AR[index]
     return SURAH_NAMES_EN[index]
@@ -236,6 +266,8 @@ def validate_verse_range(surah: int, start_ayah: int, end_ayah: int) -> tuple[in
         Tuple of (validated_start, validated_end)
     """
     max_ayah = get_verse_count(surah)
+    if not max_ayah:
+        raise ValueError("Invalid surah number")
     
     # Clamp to valid range
     start = max(1, min(start_ayah, max_ayah))

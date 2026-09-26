@@ -1,3 +1,4 @@
+@font-face { font-family: Amiri; src: url('/assets/amiri.ttf') format('truetype'); font-display: swap; }
 /* Reset & Root Variables */
 :root {
     --bg-main: #060d0a;
@@ -33,7 +34,7 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    font-family: 'Inter', sans-serif;
+    font-family: system-ui, sans-serif;
 }
 
 body {
@@ -42,7 +43,7 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow-x: hidden;
+    overflow-x: auto;
     background-image: 
         radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
         radial-gradient(circle at 90% 80%, rgba(212, 175, 55, 0.05) 0%, transparent 45%);
@@ -757,4 +758,38 @@ button {
     border-top: 1px solid var(--border-color);
     margin-top: 3rem;
     background: rgba(6, 13, 10, 0.4);
+}
+
+/* Review controls remain legible and reachable on narrow screens. */
+.workspace-panel, .sidebar-panel, .control-card, .workspace-content { min-width: 0; }
+.workspace-header { flex-wrap: wrap; gap: 1rem; }
+.workspace-actions { flex-wrap: wrap; }
+.shorts-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.header-logo, .header-badge { min-width: 0; }
+.header-logo h1, .header-badge, .card-video-title { overflow-wrap: anywhere; }
+.review-confirm { display: flex; align-items: flex-start; gap: .55rem; font-size: .9rem; line-height: 1.45; }
+.review-confirm input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: .2rem; accent-color: var(--accent); }
+.mini-input-group input { width: 100%; min-width: 0; }
+.source-link, .download-link { color: var(--color-text-secondary); text-underline-offset: .2em; overflow-wrap: anywhere; }
+.download-link { display: block; padding: .9rem; border: 1px solid var(--border-focus); border-radius: var(--radius-sm); text-align: center; }
+.job-actions { display: flex; gap: .75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.job-actions button { width: auto; }
+.output-panel { scroll-margin-top: 6rem; }
+.card-desc { text-transform: none; letter-spacing: normal; }
+input:focus-visible, button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 600px) {
+    .app-header { padding: 1rem; position: static; flex-wrap: wrap; gap: .7rem; }
+    .header-logo h1 { font-size: 1.2rem; }
+    .app-layout { padding: 1rem; gap: 1rem; }
+    .control-card, .progress-panel, .output-panel, .video-preview-card, .metadata-seo-card { padding: 1rem; }
+    .workspace-header h2 { font-size: 1.15rem; }
+    .workspace-actions { width: 100%; gap: .5rem; }
+    .workspace-actions button { padding: .65rem .7rem; }
+    .empty-workspace { padding: 1.5rem; }
+    .output-file-details { flex-wrap: wrap; }
+    .progress-header { align-items: flex-start; gap: .5rem; }
+    .output-grid { gap: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

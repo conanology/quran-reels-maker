@@ -74,3 +74,18 @@ outputs/longform/temp/
 quran_compiler/**/*.mp4
 quran_compiler/**/*.mp3
 
+# Private runtime state and job-owned media (source tests stay tracked)
+.ci-state/
+database/upload_receipts/
+database/upload_attempts/
+database/*.lock
+database/*.pre-safety-migration.sqlite
+outputs/jobs/
+outputs/videos/reel_*/
+outputs/videos/*.lock
+outputs/videos/*.manifest.json
+quran_compiler/data/jobs/
+outputs/remediation/web/site-packages/
+outputs/remediation/sandbox/
+outputs/remediation/*-sandbox/
+

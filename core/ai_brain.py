@@ -61,13 +61,13 @@ def call_openrouter(prompt: str, system_prompt: str = "") -> str:
                     if content:
                         return content.strip()
                     else:
-                        logger.warning(f"OpenRouter model {model} returned choice but no message content. Full Response: {result}")
+                        logger.warning("OpenRouter returned no message content for {}", model)
                 else:
-                    logger.error(f"OpenRouter returned unexpected response structure for {model}: {result}")
+                    logger.error("OpenRouter returned an unexpected response structure for {}", model)
             else:
-                logger.error(f"OpenRouter API error for {model}: {response.status_code} - {response.text}")
+                logger.error("OpenRouter API error for {}: HTTP {}", model, response.status_code)
         except Exception as e:
-            logger.error(f"OpenRouter request failed for {model}: {e}")
+            logger.error("OpenRouter request failed for {} ({})", model, type(e).__name__)
 
     return ""
 
@@ -103,7 +103,7 @@ def generate_visual_prompt(translation: str) -> str:
         style_suffix = ", cinematic lighting, ultra-detailed, 8k resolution, photorealistic, serene atmospheric composition, beautiful colors, premium aesthetic"
         if not any(tag in ai_response.lower() for tag in ["8k", "photorealistic", "cinematic"]):
             ai_response += style_suffix
-        logger.info(f"AI generated visual prompt: {ai_response}")
+        logger.info("AI visual suggestion generated; final media requires review")
         return ai_response
 
     return ""
@@ -217,6 +217,8 @@ def generate_video_metadata(
     """
     Generate engaging title, description, and tags for YouTube upload.
     """
+    if os.getenv("ENABLE_AI_METADATA", "false").lower() != "true":
+        return {}
     system_prompt = (
         "You are a social media growth expert specializing in Islamic content. Your task is to generate engaging metadata "
         "for a YouTube Short / TikTok video based on the Quranic verse translation and reciter.\n"
@@ -247,7 +249,7 @@ def generate_video_metadata(
         metadata = json.loads(cleaned_json)
         
         # Basic validation
-        if all(k in metadata for k in ("title", "description", "tags")):
+        if _valid_metadata_suggestion(metadata, "description"):
             # Find matching reciter key to perform post-sanitization
             reciter_key = None
             for k, v in RECITERS.items():
@@ -260,13 +262,14 @@ def generate_video_metadata(
                 metadata["description"] = sanitize_reciter_names(metadata["description"], reciter_key)
                 metadata["tags"] = [sanitize_reciter_names(tag, reciter_key) for tag in metadata["tags"]]
 
-            logger.info(f"AI generated metadata title: {metadata['title']}")
+            metadata["requires_content_review"] = True
+            logger.info("AI metadata suggestion requires final content review")
             return metadata
         else:
-            logger.warning(f"AI metadata response missing required fields: {metadata}")
+            logger.warning("AI metadata response failed bounded schema validation")
             return {}
     except Exception as e:
-        logger.error(f"Failed to parse AI metadata JSON: {e}\nRaw response:\n{ai_response}")
+        logger.error("AI metadata parsing failed ({})", type(e).__name__)
         return {}
 
 
@@ -279,6 +282,8 @@ def generate_longform_video_metadata(
     """
     Generate high-CTR title, descriptive reflection, and tags for long-form videos.
     """
+    if os.getenv("ENABLE_AI_METADATA", "false").lower() != "true":
+        return {}
     from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN
     
     if surah_start == surah_end:
@@ -315,7 +320,7 @@ def generate_longform_video_metadata(
         metadata = json.loads(cleaned_json)
         
         # Basic validation
-        if all(k in metadata for k in ("title", "reflection", "tags")):
+        if _valid_metadata_suggestion(metadata, "reflection"):
             # Find matching reciter key to perform post-sanitization
             reciter_key = None
             for k, v in RECITERS.items():
@@ -328,11 +333,24 @@ def generate_longform_video_metadata(
                 metadata["reflection"] = sanitize_reciter_names(metadata["reflection"], reciter_key)
                 metadata["tags"] = [sanitize_reciter_names(tag, reciter_key) for tag in metadata["tags"]]
 
-            logger.info(f"AI generated longform title: {metadata['title']}")
+            metadata["requires_content_review"] = True
+            logger.info("AI metadata suggestion requires final content review")
             return metadata
         else:
-            logger.warning(f"AI longform metadata response missing required fields: {metadata}")
+            logger.warning("AI longform metadata response failed bounded schema validation")
             return {}
     except Exception as e:
-        logger.error(f"Failed to parse AI longform metadata JSON: {e}\nRaw response:\n{ai_response}")
+        logger.error("AI longform metadata parsing failed ({})", type(e).__name__)
         return {}
+
+
+def _valid_metadata_suggestion(metadata, body_field):
+    """Validate types/limits, never claim to validate religious interpretation."""
+    if not isinstance(metadata, dict):
+        return False
+    title, body, tags = metadata.get("title"), metadata.get(body_field), metadata.get("tags")
+    return (isinstance(title, str) and 0 < len(title.strip()) <= 100
+            and isinstance(body, str) and 0 < len(body.strip()) <= 4000
+            and isinstance(tags, list) and 1 <= len(tags) <= 20
+            and all(isinstance(tag, str) and 0 < len(tag.strip()) <= 80 for tag in tags)
+            and sum(map(len, tags)) <= 450)

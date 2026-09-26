@@ -20,16 +20,21 @@ from pathlib import Path
 from loguru import logger
 
 # Configure logging
-from config.settings import LOG_FILE, LOG_LEVEL, LOG_FORMAT, BASE_DIR
+from config.settings import LOG_FILE, LOG_LEVEL, LOG_FORMAT, BASE_DIR, OUTPUTS_DIR
 
-# Remove default handler and add custom ones
-logger.remove()
-logger.add(sys.stderr, level=LOG_LEVEL, format=LOG_FORMAT)
-logger.add(LOG_FILE, level=LOG_LEVEL, format=LOG_FORMAT, rotation="10 MB")
+def configure_logging(file_logging=True):
+    """Only an invoked CLI configures sinks; import and dry-run create no logs."""
+    logger.remove()
+    logger.add(sys.stderr,level=LOG_LEVEL,format=LOG_FORMAT,diagnose=False,backtrace=False)
+    if file_logging:
+        logger.add(LOG_FILE,level=LOG_LEVEL,format=LOG_FORMAT,rotation='10 MB',diagnose=False,backtrace=False)
 
 
 def cmd_generate(args):
     """Generate a new Quran reel video."""
+    if args.dry_run:
+        print('DRY RUN: generation preview; sequence is read only when generation runs')
+        return {'status':'dry_run','requested_surah':getattr(args,'surah',None)}
     from core.video_generator import generate_reel
     from core.verse_scheduler import (
         get_next_verses,
@@ -37,17 +42,15 @@ def cmd_generate(args):
         record_reel_history,
         get_current_progress
     )
-    from core.quran_api import get_full_text, get_surah_name
+    from core.quran_api import get_surah_name
     from config.settings import DEFAULT_RECITER, RECITERS
-    import random
     
-    # Dynamic reciter selection
+    # Honor the configured default when no reciter is requested.
     if args.reciter:
         reciter = args.reciter
     else:
-        # Pick a random reciter from the available list
-        reciter = random.choice(list(RECITERS.keys()))
-        logger.info(f"Randomly selected reciter: {reciter}")
+        reciter = DEFAULT_RECITER
+        logger.info("Using configured default reciter: {}", reciter)
     
     if args.surah:
         # Generate specific verses
@@ -84,7 +87,7 @@ def cmd_generate(args):
     
     if args.dry_run:
         print("🔍 DRY RUN - No video will be generated")
-        return None
+        return {'status':'dry_run'}
     
     # Generate the reel
     try:
@@ -92,12 +95,16 @@ def cmd_generate(args):
             surah=surah,
             start_ayah=start,
             end_ayah=end,
-            reciter_key=reciter
+            reciter_key=reciter,
+            **({'output_path': Path(OUTPUTS_DIR) / 'jobs' / args._job_id / 'reel.mp4'}
+               if getattr(args,'_job_id',None) else {})
         )
         
         # Record in history using ACTUAL range (in case it was extended)
-        full_text = get_full_text(surah, actual_start, actual_end)
-        history_id = record_reel_history(
+        from core.utils import load_media_manifest
+        manifest=load_media_manifest(video_path)
+        full_text=' '.join(verse.get('text','') for verse in manifest['verses']).strip()
+        history_id = None if getattr(args,'_job_id',None) or getattr(args,'test',False) else record_reel_history(
             surah=surah,
             start_ayah=actual_start,
             end_ayah=actual_end,
@@ -106,8 +113,8 @@ def cmd_generate(args):
         )
         
         # Advance progress (only for auto-selected verses) based on ACTUAL end
-        if not args.surah:
-            advance_progress(surah, actual_end)
+        # Generation reserves no published coverage. Only a verified platform
+        # receipt and atomic finalization may advance the publication journey.
         
         print(f"\n✅ Video generated successfully!")
         print(f"📂 Output: {video_path}")
@@ -124,9 +131,9 @@ def cmd_generate(args):
         }
         
     except Exception as e:
-        logger.error(f"Generation failed: {e}")
-        print(f"\n❌ Error: {e}")
-        return None
+        logger.error(f"Generation failed: {type(e).__name__}")
+        print(f"\n❌ Error: {type(e).__name__}")
+        return {'status':'failed','error':type(e).__name__}
 
 
 def cmd_upload(args):
@@ -137,14 +144,14 @@ def cmd_upload(args):
     
     # Check authentication
     auth_status = check_authentication_status()
-    if auth_status['status'] != 'valid':
+    if auth_status['status'] not in ('valid','expired'):
         print(f"❌ {auth_status['message']}")
-        return None
+        return {'status':'failed','error':'Authentication unavailable'}
     
     video_path = Path(args.video_path)
     if not video_path.exists():
         print(f"❌ Video file not found: {video_path}")
-        return None
+        return {'status':'failed','error':'Video file not found'}
     
     # Generate or use provided metadata
     if args.title:
@@ -186,215 +193,128 @@ def cmd_upload(args):
         return result
         
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        print(f"\n❌ Error: {e}")
-        return None
+        logger.error(f"Upload failed: {type(e).__name__}")
+        print(f"\n❌ Upload failed: {type(e).__name__}")
+        return {'status':'failed','error':type(e).__name__}
 
 
 def cmd_auto(args):
-    """Automatically generate and upload a reel with optional approval."""
-    print("\n🚀 AUTOMATIC MODE - Generate & Upload\n")
-    
-    from notifications.telegram_bot import (
-        is_configured as telegram_configured,
-        send_approval_request,
-        wait_for_approval,
-        notify_upload_success,
-        notify_upload_failure,
-        APPROVAL_REQUIRED
-    )
-    from youtube.uploader import upload_video, generate_metadata
-    from youtube.auth import check_authentication_status
-    from core.verse_scheduler import update_reel_youtube_id
-    from core.video_generator import get_video_duration
-    from config.settings import RECITERS
-    import os
-    
-    max_attempts = 3  # Max regeneration attempts
-    attempt = 0
-    
-    while attempt < max_attempts:
-        attempt += 1
-        
-        if attempt > 1:
-            print(f"\n🔄 Regeneration attempt {attempt}/{max_attempts}...")
-        
-        # Generate video
-        gen_result = cmd_generate(args)
-        
-        if gen_result is None:
-            print("❌ Generation failed, aborting")
-            return None
-        
-        # Get video duration for approval message
-        video_duration = get_video_duration(gen_result['video_path'])
-        
-        # Get reciter name for display
-        reciter_info = RECITERS.get(gen_result['reciter'], {})
-        reciter_name = reciter_info.get('name_ar', gen_result['reciter'])
-        
-        # === TELEGRAM APPROVAL WORKFLOW ===
-        if telegram_configured() and APPROVAL_REQUIRED:
-            from core.quran_api import get_surah_name
-            surah_name = get_surah_name(gen_result['surah'], "ar")
-            
-            print("\n📱 Sending video to Telegram for approval...")
-            
-            message_id = send_approval_request(
-                video_path=gen_result['video_path'],
-                surah_name=surah_name,
-                surah_num=gen_result['surah'],
-                start_ayah=gen_result['start_ayah'],
-                end_ayah=gen_result['end_ayah'],
-                reciter_name=reciter_name,
-                duration=video_duration
-            )
-            
-            if message_id:
-                print("✅ Video sent! Waiting for your approval...")
-                print("   Reply 'approve', 'reject', or 'regenerate' on Telegram")
-                
-                approval = wait_for_approval()
-                
-                if approval == 'approved' or approval == 'skip':
-                    print("✅ Approved! Proceeding with upload...")
-                    break  # Exit loop and upload
-                    
-                elif approval == 'rejected':
-                    print("❌ Rejected. Video deleted.")
-                    # Delete the video
-                    try:
-                        os.remove(gen_result['video_path'])
-                    except:
-                        pass
-                    return None
-                    
-                elif approval == 'regenerate':
-                    print("🔄 Regenerating with new settings...")
-                    # Delete current video
-                    try:
-                        os.remove(gen_result['video_path'])
-                    except:
-                        pass
-                    continue  # Try again
-                    
-                elif approval == 'timeout':
-                    print("⏰ Timeout. Video NOT uploaded (saved locally).")
-                    return gen_result
-            else:
-                print("⚠️ Could not send to Telegram. Proceeding without approval...")
-                break
-        else:
-            # No approval required, proceed directly
-            break
-    
-    # === UPLOAD TO YOUTUBE ===
-    auth_status = check_authentication_status()
-    if auth_status['status'] != 'valid':
-        print(f"\n⚠️ YouTube not configured: {auth_status['message']}")
-        print("Video saved locally. Run 'python main.py setup-youtube' to enable uploads.")
-        return gen_result
-    
-    # Generate metadata
-    metadata = generate_metadata(
-        surah=gen_result['surah'],
-        start_ayah=gen_result['start_ayah'],
-        end_ayah=gen_result['end_ayah'],
-        reciter_key=gen_result['reciter'],
-        full_text=gen_result['full_text']
-    )
-    
-    print("\n" + "-"*50)
-    print("📤 Uploading to YouTube...")
-    print("-"*50)
-    
-    try:
-        privacy = 'private' if args.test else 'public'
-        result = upload_video(
-            gen_result['video_path'],
-            metadata,
-            privacy_status=privacy
-        )
-        
-        # Update history
-        update_reel_youtube_id(gen_result['history_id'], result['video_id'])
-        
-        print(f"\n🎉 Complete! Video is now live!")
-        print(f"🔗 {result['url']}")
-        
-        # Notify on Telegram
-        if telegram_configured():
-            notify_upload_success(result['url'])
-            
-        # === UPLOAD TO TIKTOK ===
-        from tiktok.uploader import is_configured, upload_to_tiktok, generate_tiktok_metadata
-        if is_configured():
-            print("\n📤 Uploading to TikTok...")
-            from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN, RECITERS
-            
-            surah_num = gen_result['surah']
-            surah_name_ar = SURAH_NAMES_AR[surah_num - 1]
-            surah_name_en = SURAH_NAMES_EN[surah_num - 1]
-            reciter = gen_result['reciter']
-            reciter_name_ar = RECITERS.get(reciter, {}).get("name_ar", reciter)
-            
-            tiktok_meta = generate_tiktok_metadata(
-                surah_name_ar=surah_name_ar,
-                surah_name_en=surah_name_en,
-                surah_num=surah_num,
-                start_ayah=gen_result['start_ayah'],
-                end_ayah=gen_result['end_ayah'],
-                reciter_name_ar=reciter_name_ar
-            )
-            
-            try:
-                tt_res = upload_to_tiktok(Path(gen_result['video_path']), tiktok_meta)
-                if tt_res and tt_res.get('status') == 'uploaded':
-                    print(f"✅ Successfully uploaded to TikTok! Publish ID: {tt_res.get('publish_id')}")
-                else:
-                    print(f"⚠️ TikTok upload failed: {tt_res.get('error', 'Unknown error') if tt_res else 'No response'}")
-            except Exception as e:
-                logger.error(f"TikTok upload failed with exception: {e}")
-                print(f"⚠️ TikTok upload failed: {e}")
-        else:
-            print("\nℹ️ TikTok not configured or authorized. Skipping automated TikTok upload.")
-            print("="*60)
-            print("📢 MANUAL TIKTOK UPLOAD INFORMATION")
-            print("="*60)
-            print(f"📁 Video File Location: {gen_result['video_path']}")
-            try:
-                from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN, RECITERS
-                surah_num = gen_result['surah']
-                surah_name_ar = SURAH_NAMES_AR[surah_num - 1]
-                surah_name_en = SURAH_NAMES_EN[surah_num - 1]
-                reciter = gen_result['reciter']
-                reciter_name_ar = RECITERS.get(reciter, {}).get("name_ar", reciter)
-                
-                tiktok_meta = generate_tiktok_metadata(
-                    surah_name_ar=surah_name_ar,
-                    surah_name_en=surah_name_en,
-                    surah_num=surah_num,
-                    start_ayah=gen_result['start_ayah'],
-                    end_ayah=gen_result['end_ayah'],
-                    reciter_name_ar=reciter_name_ar
-                )
-                print(f"📝 Caption & Hashtags:\n\n{tiktok_meta['caption']}")
-            except Exception as e:
-                print(f"⚠️ Failed to generate TikTok caption: {e}")
-            print("="*60)
-        
+    """Generate, review the final package, then publish one reserved job."""
+    from config.settings import DATABASE_PATH
+    from core.runtime_safety import exclusive_lock, LockTimeoutError
+    if args.dry_run:
+        return {'status':'dry_run'}
+    if args.test:
+        result=cmd_generate(args)
+        if result and result.get('status') != 'failed':
+            result['status']='generated_test'
         return result
-        
-    except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        print(f"\n⚠️ Upload failed: {e}")
-        print(f"Video saved locally: {gen_result['video_path']}")
-        
-        # Notify failure on Telegram
-        if telegram_configured():
-            notify_upload_failure(str(e))
-        
-        return gen_result
+    try:
+        with exclusive_lock(DATABASE_PATH.parent / 'publishing.lock', timeout=0):
+            return _run_auto_reel(args)
+    except LockTimeoutError:
+        return {'status':'skipped','reason':'Another automatic job owns the publishing lock'}
+
+
+def _run_auto_reel(args):
+    import copy
+    import datetime
+    import json
+    from config.settings import RECITERS, DEFAULT_RECITER
+    from core.verse_scheduler import get_next_verses, is_friday, get_friday_verses
+    from database.jobs import reserve_job, mark_job, read_upload_receipts, finalize_published_job, assert_transfer_retry_safe
+    from notifications.publishing_policy import require_automatic_approval, PublishingPolicyError
+    from youtube.uploader import upload_video, generate_metadata
+    from core.utils import load_media_manifest, require_manifest_coverage
+    selected=copy.copy(args)
+    sequential=not args.surah
+    if args.surah:
+        surah,start,end=args.surah,args.start or 1,args.end or ((args.start or 1)+args.verses-1)
+    elif os.getenv('FRIDAY_MODE_ENABLED','true').lower()=='true' and is_friday():
+        surah,start,end=get_friday_verses()
+        sequential=False
+    else:
+        surah,start,end=get_next_verses(args.verses)
+    reciter=args.reciter or DEFAULT_RECITER
+    key=(f'journey:{surah}:{start}' if sequential else
+         f'thematic:{datetime.date.today().isoformat()}:{surah}:{start}:{end}:{reciter}')
+    job=reserve_job(key,surah=surah,start_ayah=start,end_ayah=end,reciter_key=reciter,sequential=sequential)
+    if job.get('finalized'):
+        return dict(read_upload_receipts(job['id']).get('youtube',{}),status='skipped')
+    selected.surah,selected.start,selected.end=job['surah'],job['start_ayah'],job['end_ayah']
+    selected.reciter=job['reciter_key']
+    selected._job_id=job['id']
+    completed_receipt=None
+    try:
+        existing_receipt=read_upload_receipts(job['id']).get('youtube')
+        if not existing_receipt:
+            assert_transfer_retry_safe(job['id'],'youtube')
+        for attempt in range(3):
+            if existing_receipt:
+                if not job.get('video_path') or not job.get('metadata_json') or not job.get('approval'):
+                    raise RuntimeError('Existing remote receipt needs explicit reconciliation; retransfers are forbidden')
+                metadata=json.loads(job['metadata_json'])
+                approval=json.loads(job['approval'])
+                video_path=Path(job['video_path'])
+                manifest=load_media_manifest(video_path)
+                require_manifest_coverage(manifest,surah_start=job['surah'],start_ayah=job['start_ayah'],
+                    surah_end=job['surah'],end_ayah=job['end_ayah'],reciter_key=job['reciter_key'])
+                coverage=manifest['coverage'][0]
+                generated=dict(video_path=video_path,surah=coverage['surah'],start_ayah=coverage['start_ayah'],
+                               end_ayah=coverage['end_ayah'],reciter=job['reciter_key'])
+            else:
+                generated=cmd_generate(selected)
+                if not generated or generated.get('status')=='failed':
+                    raise RuntimeError('Video generation failed')
+                video_path=Path(generated['video_path'])
+                manifest=load_media_manifest(video_path)
+                if (generated['surah'],generated['start_ayah'],generated['reciter'])!=(job['surah'],job['start_ayah'],job['reciter_key']):
+                    raise ValueError('Generated range or reciter differs from reserved publication')
+                require_manifest_coverage(manifest,surah_start=generated['surah'],start_ayah=generated['start_ayah'],
+                    surah_end=generated['surah'],end_ayah=generated['end_ayah'],reciter_key=generated['reciter'])
+                metadata=generate_metadata(surah=generated['surah'],start_ayah=generated['start_ayah'],
+                    end_ayah=generated['end_ayah'],reciter_key=generated['reciter'],full_text=generated['full_text'])
+                mark_job(job['id'],'generated',video_path=str(video_path),metadata_json=json.dumps(metadata),
+                         manifest=manifest,end_ayah=generated['end_ayah'])
+                try:
+                    approval=require_automatic_approval(video_path,metadata,job_id=job['id'],manifest=manifest)
+                except PublishingPolicyError as error:
+                    mark_job(job['id'],error.decision,error_message=str(error))
+                    if error.decision=='regenerate' and attempt<2:
+                        continue
+                    return {'status':'failed','decision':error.decision,'job_id':job['id'],'error':str(error)}
+            receipt=upload_video(video_path,metadata,privacy_status='public',automatic=True,
+                                 job_id=job['id'],approval=approval)
+            finalize_published_job(job['id'],dict(surah=generated['surah'],start_ayah=generated['start_ayah'],
+                end_ayah=generated['end_ayah'],reciter_key=generated['reciter'],
+                video_path=str(video_path)),receipt)
+            completed_receipt=dict(receipt)
+            # Crossposting is a separate reviewed publishing operation. It is off
+            # by default and has its own identity, privacy and final package hash.
+            if os.getenv('ENABLE_TIKTOK_AUTOPUBLISH','false').lower()=='true':
+                from tiktok.uploader import upload_to_tiktok, generate_tiktok_metadata
+                from config.settings import SURAH_NAMES_AR, SURAH_NAMES_EN
+                s=generated['surah']
+                tt=generate_tiktok_metadata(SURAH_NAMES_AR[s-1],SURAH_NAMES_EN[s-1],s,
+                    generated['start_ayah'],generated['end_ayah'],RECITERS[generated['reciter']]['name_ar'])
+                tt.update(title=metadata['title'],description=tt['caption'],tags=[])
+                review=require_automatic_approval(video_path,tt,job_id=job['id'],platform='tiktok',
+                    privacy_status='PUBLIC_TO_EVERYONE',manifest=manifest)
+                tt_result=upload_to_tiktok(video_path,tt,automatic=True,job_id=job['id'],approval=review,
+                                          privacy_status='PUBLIC_TO_EVERYONE')
+                receipt['tiktok_status']=tt_result.get('status')
+                if tt_result.get('status')!='published':
+                    return dict(receipt,status='partial',error='YouTube published; TikTok requires recovery')
+            print(f"Publication confirmed ({receipt['privacy_status']}): {receipt['url']}")
+            return receipt
+        return {'status':'failed','error':'Regeneration attempts exhausted','job_id':job['id']}
+    except Exception as error:
+        if completed_receipt is not None:
+            logger.error(f'Post-publication step failed: {type(error).__name__}; confirmed YouTube publication retained')
+            return dict(completed_receipt,status='partial',error=type(error).__name__,job_id=job['id'])
+        mark_job(job['id'],'failed',error_message=type(error).__name__)
+        logger.error(f'Automatic job failed: {type(error).__name__}; media and receipts retained')
+        return {'status':'failed','error':type(error).__name__,'job_id':job['id']}
 
 
 def cmd_batch(args):
@@ -423,8 +343,8 @@ def cmd_batch(args):
             time.sleep(delay)
 
     # Summary
-    success = sum(1 for r in results if r and r.get('url'))
-    failed = sum(1 for r in results if r is None)
+    success = sum(1 for r in results if r and r.get('status') in ('published','processed'))
+    failed = sum(1 for r in results if r is None or r.get('status') in ('failed','partial'))
     local_only = count - success - failed
 
     print(f"\n{'='*50}")
@@ -436,6 +356,7 @@ def cmd_batch(args):
     if failed:
         print(f"   ❌ Failed: {failed}")
     print(f"{'='*50}\n")
+    return {'status':'failed' if failed else 'completed','uploaded':success,'failed':failed,'local_only':local_only}
 
 
 def cmd_status(args):
@@ -506,18 +427,13 @@ def cmd_tiktok(args):
     status = get_tiktok_status()
     if not status['configured']:
         print(f"\n❌ TikTok not configured: {status['message']}")
-        print("\nTo configure TikTok:")
-        print("1. Log into TikTok in your browser")
-        print("2. Open DevTools (F12) → Application → Cookies → tiktok.com")
-        print("3. Copy the 'sessionid' value")
-        print("4. Add to .env: TIKTOK_SESSION_ID=your_session_id")
-        print("5. Set TIKTOK_ENABLED=true")
-        return
+        print('Configure Developer API keys, run setup-tiktok, and set TIKTOK_EXPECTED_OPEN_ID.')
+        return {'status':'auth_error','error':status['message']}
     
     video_path = Path(args.video_path)
     if not video_path.exists():
         print(f"\n❌ Video not found: {video_path}")
-        return
+        return {'status':'failed','error':'Video not found'}
     
     # Parse video filename to extract metadata
     # Expected format: QuranReel_SURAH_NAME_VERSES_TIMESTAMP.mp4
@@ -562,14 +478,15 @@ def cmd_tiktok(args):
     result = upload_to_tiktok(video_path, metadata)
     
     if result:
-        if result.get('status') == 'uploaded':
-            print(f"\n✅ Successfully uploaded to TikTok!")
+        if result.get('status') in ('published','processed'):
+            print(f"\nTikTok processing confirmed ({result.get('privacy_status','unknown visibility')})")
         elif result.get('status') == 'metadata_saved':
             print(f"\n📄 Metadata saved for manual upload: {result.get('meta_path')}")
         else:
             print(f"\n❌ Upload failed: {result.get('error', 'Unknown error')}")
     else:
         print(f"\n❌ Upload failed - check logs for details")
+    return result or {'status':'failed','error':'No platform result'}
 
 
 def cmd_setup_youtube(args):
@@ -632,7 +549,7 @@ Then run this command again.
         return True
         
     except Exception as e:
-        print(f"\n❌ Authentication failed: {e}")
+        print(f"\n❌ Authentication failed: {type(e).__name__}")
         return False
 
 
@@ -647,7 +564,7 @@ def cmd_setup_tiktok(args):
         print("\n✅ TikTok authentication complete!")
         return True
     except Exception as e:
-        print(f"\n❌ Authentication failed: {e}")
+        print(f"\n❌ Authentication failed: {type(e).__name__}")
         return False
 
 
@@ -806,121 +723,86 @@ def cmd_longform(args):
             print("\n✅ Compilation successful!")
             print(f"   Output: {metadata['output_path']}")
             print(f"   Duration: {metadata['duration_formatted']}")
+            return dict(metadata,status='generated')
         except Exception as e:
-            logger.error(f"Manual compilation failed: {e}")
-            print(f"\n❌ Error: {e}")
+            logger.error(f"Manual compilation failed: {type(e).__name__}")
+            print(f"\n❌ Error: {type(e).__name__}")
+            return {'status':'failed','error':type(e).__name__}
             
     elif args.lf_command == 'auto':
-        from longform.scheduler import get_next_compilation, record_compilation, update_compilation_youtube
-        from longform.compiler import generate_longform
-        from longform.visual_randomizer import generate_compilation_style
-        from youtube.uploader import upload_video
-        from youtube.auth import check_authentication_status
-        from config.settings import DEFAULT_RECITER, RECITERS, VERSE_COUNTS
-        import os
-        import random
-        
-        # Check authentication first
-        auth_status = check_authentication_status()
-        if auth_status['status'] != 'valid':
-            print(f"❌ YouTube authentication is not valid: {auth_status['message']}")
-            print("Please run 'python main.py setup-youtube' first.")
-            return
-            
-        # 1. Get next compilation
-        group = get_next_compilation()
-        if not group:
-            print("\n🎉 All longform videos have been compiled!")
-            return
-            
-        reciter = args.reciter
-        if not reciter:
-            # Pick a random reciter from the available list to make it diverse
-            reciter = random.choice(list(RECITERS.keys()))
-            logger.info(f"Randomly selected reciter for long-form: {reciter}")
-            
-        # Determine total ayahs to compile in this group
-        total_ayahs = 0
-        for s in range(group["surah_start"], group["surah_end"] + 1):
-            if s == group["surah_start"] and group["ayah_start"] is not None:
-                sa = group["ayah_start"]
-            else:
-                sa = 1
-            if s == group["surah_end"] and group["ayah_end"] is not None:
-                ea = group["ayah_end"]
-            else:
-                ea = VERSE_COUNTS[s]
-            total_ayahs += ea - sa + 1
-            
-        styles = generate_compilation_style(total_ayahs)
-        
-        # 2. Render
-        print(f"\n🚀 Rendering: {group['title']}")
-        print(f"   Reciter: {reciter}")
-        print(f"   Est. Duration: {group['estimated_duration']/60:.1f} mins\n")
-        
-        try:
-            metadata = generate_longform(
-                surah_start=group["surah_start"],
-                surah_end=group["surah_end"],
-                reciter_key=reciter,
-                compilation_styles=styles,
-                ayah_start=group["ayah_start"],
-                ayah_end=group["ayah_end"]
-            )
-            
-            bg_id = None
-            
-            # 3. Record in DB
-            history_id = record_compilation(
-                title=metadata["recommended_title"],
-                surah_start=group["surah_start"],
-                surah_end=group["surah_end"],
-                num_clips=total_ayahs,
-                source_clip_ids=[],
-                duration_seconds=metadata["duration_seconds"],
-                video_path=metadata["output_path"],
-                background_video_id=bg_id,
-                ayah_start=group["ayah_start"],
-                ayah_end=group["ayah_end"]
-            )
-            
-            # 4. Upload to YouTube as Unlisted
-            privacy = 'private' if args.test else 'unlisted'
-            
-            youtube_meta = {
-                'title': metadata["recommended_title"],
-                'description': metadata["description"],
-                'tags': metadata["tags"]
-            }
-            
-            print(f"\n📤 Uploading to YouTube as {privacy.upper()}...")
-            video_path = Path(metadata["output_path"])
-            
-            upload_result = upload_video(
-                video_path,
-                youtube_meta,
-                privacy_status=privacy
-            )
-            
-            # 5. Upload custom thumbnail if generated
-            thumbnail_path_str = metadata.get("thumbnail_path")
-            if thumbnail_path_str:
-                try:
-                    from youtube.uploader import upload_thumbnail
-                    upload_thumbnail(upload_result['video_id'], Path(thumbnail_path_str))
-                except Exception as e:
-                    logger.error(f"Failed to upload custom thumbnail: {e}")
-            
-            # 6. Update DB record with YouTube ID
-            update_compilation_youtube(history_id, upload_result['video_id'])
-            
-            print(f"\n🎉 Successfully completed!")
-            print(f"   YouTube URL: {upload_result['url']}")
-            
-        except Exception as e:
-            logger.error(f"Auto long-form flow failed: {e}")
-            print(f"\n❌ Flow failed: {e}")
+        return cmd_auto_longform(args)
+
+
+def cmd_auto_longform(args):
+    import json
+    from config.settings import DATABASE_PATH, DEFAULT_RECITER, VERSE_COUNTS
+    from core.runtime_safety import exclusive_lock, LockTimeoutError
+    from core.utils import load_media_manifest, require_manifest_coverage
+    from database.jobs import reserve_job, mark_job, read_upload_receipts, finalize_published_job, assert_transfer_retry_safe
+    from notifications.publishing_policy import require_automatic_approval
+    from longform.scheduler import get_next_compilation
+    from longform.compiler import generate_longform
+    from youtube.uploader import upload_video, upload_thumbnail
+    # Test mode is a local-only preview; it never initializes auth, sends review,
+    # transfers bytes, or consumes the compilation/publication queue.
+    if args.test:
+        return {'status':'skipped','reason':'Test mode suppresses automatic publication'}
+    try:
+        with exclusive_lock(DATABASE_PATH.parent / 'publishing.lock',timeout=0):
+            group=get_next_compilation()
+            if not group:return {'status':'skipped','reason':'All compilation groups published'}
+            reciter=args.reciter or DEFAULT_RECITER
+            key=f"longform:{group['surah_start']}:{group['surah_end']}:{group.get('ayah_start')}:{group.get('ayah_end')}"
+            job=reserve_job(key,surah=group['surah_start'],start_ayah=group.get('ayah_start') or 1,
+                end_ayah=group.get('ayah_end') or VERSE_COUNTS[group['surah_end']],reciter_key=reciter,
+                surah_end=group['surah_end'])
+            if job.get('finalized'):
+                return {'status':'skipped','reason':'Compilation job already finalized'}
+            try:
+                prior=read_upload_receipts(job['id']).get('youtube')
+                if prior:
+                    if not job.get('video_path') or not job.get('metadata_json') or not job.get('approval'):
+                        raise RuntimeError('Existing receipt requires reconciliation; transfer will not repeat')
+                    video_path=Path(job['video_path'])
+                    metadata=json.loads(job['metadata_json'])
+                    approval=json.loads(job['approval'])
+                    thumbnail_path=approval.get('thumbnail_path')
+                    manifest=load_media_manifest(video_path)
+                    require_manifest_coverage(manifest,surah_start=job['surah'],start_ayah=job['start_ayah'],
+                        surah_end=job['surah_end'] or job['surah'],end_ayah=job['end_ayah'],reciter_key=job['reciter_key'])
+                else:
+                    assert_transfer_retry_safe(job['id'],'youtube')
+                    video_path=Path(OUTPUTS_DIR)/'jobs'/job['id']/'longform.mp4'
+                    video_path.parent.mkdir(parents=True,exist_ok=True)
+                    generated=generate_longform(surah_start=group['surah_start'],surah_end=group['surah_end'],
+                        reciter_key=job['reciter_key'],ayah_start=group.get('ayah_start'),ayah_end=group.get('ayah_end'),
+                        output_filename=str(video_path))
+                    video_path=Path(generated['output_path'])
+                    manifest=load_media_manifest(video_path)
+                    require_manifest_coverage(manifest,surah_start=job['surah'],start_ayah=job['start_ayah'],
+                        surah_end=job['surah_end'] or job['surah'],end_ayah=job['end_ayah'],reciter_key=job['reciter_key'])
+                    metadata=dict(title=generated['recommended_title'],description=generated['description'],tags=generated['tags'])
+                    thumbnail_path=generated.get('thumbnail_path')
+                    mark_job(job['id'],'generated',video_path=str(video_path),metadata_json=json.dumps(metadata),manifest=manifest)
+                    approval=require_automatic_approval(video_path,metadata,job_id=job['id'],privacy_status='unlisted',manifest=manifest,
+                        thumbnail_path=thumbnail_path)
+                receipt=upload_video(video_path,metadata,privacy_status='unlisted',automatic=True,job_id=job['id'],approval=approval,
+                    thumbnail_path=thumbnail_path)
+                if thumbnail_path and not upload_thumbnail(receipt['video_id'],Path(thumbnail_path),automatic=True,approval=approval):
+                    raise RuntimeError('Reviewed custom thumbnail update failed; reconcile existing video')
+                coverage=manifest['coverage']
+                finalize_published_job(job['id'],dict(kind='longform',title=metadata['title'],
+                    surah_start=coverage[0]['surah'],surah_end=coverage[-1]['surah'],
+                    ayah_start=coverage[0]['start_ayah'],ayah_end=coverage[-1]['end_ayah'],
+                    num_clips=len(manifest.get('verses',[])),source_clip_ids='[]',
+                    duration_seconds=int(manifest['duration_seconds']),video_path=str(video_path),reciter_key=job['reciter_key']),receipt)
+                return receipt
+            except Exception as error:
+                mark_job(job['id'],'failed',error_message=type(error).__name__)
+                logger.error(f'Longform automatic job failed: {type(error).__name__}; receipts and media retained')
+                return {'status':'failed','error':type(error).__name__,'job_id':job['id']}
+    except LockTimeoutError:
+        return {'status':'skipped','reason':'Another automatic job owns the publishing lock'}
 
 
 def cmd_growth_engine(args):
@@ -953,11 +835,12 @@ def cmd_growth_engine(args):
         # execute_scheduled_slot converts every exception into a result dict, so
         # without an explicit exit code a slot that posted nothing still reports
         # success to GitHub Actions. 'suppressed' and 'dry_run' are not failures.
-        if result.get("status") == "failed":
+        if result.get("status") in ('failed','partial','auth_error'):
             sys.exit(1)
+        return result
 
     elif args.ge_command == 'list':
-        from core.growth_engine import get_mecca_time, get_slot_format
+        from core.growth_engine import get_mecca_time, get_current_slot
         import datetime
         
         now = get_mecca_time()
@@ -972,27 +855,14 @@ def cmd_growth_engine(args):
         for offset_hours in range(24 * 7):
             future_time = current + datetime.timedelta(hours=offset_hours)
             
-            # Simple slot checks matching get_current_slot logic
-            weekday = future_time.weekday()
-            hour = future_time.hour
-            slot_name = None
-            
-            if weekday == 4 and 20 <= hour <= 23:
-                if hour == 21:
-                    slot_name = "friday_long"
-            elif weekday == 5 and 21 <= hour <= 23:
-                if hour == 22:
-                    slot_name = "saturday_sleep"
-            elif hour == 5:
-                slot_name = "morning_short"
-            elif hour == 20:
-                slot_name = "evening_short"
-                
-            if slot_name:
-                fmt = get_slot_format(slot_name)
-                print(f"   - {future_time.strftime('%Y-%m-%d %I:%M %p (%a)')} | Slot: {slot_name:<15} | Format: {fmt}")
+            slot_name=get_current_slot(future_time)
+            previous_slot=get_current_slot(future_time-datetime.timedelta(hours=1))
+            if slot_name and slot_name!=previous_slot:
+                format_label={'morning_short':'standard_short','evening_short':'reviewed short variation',
+                              'friday_long':'full_surah_long','saturday_sleep':'unavailable (no validated loop builder)'}[slot_name]
+                print(f"   - {future_time.strftime('%Y-%m-%d %I:%M %p (%a)')} | Slot: {slot_name:<15} | Format: {format_label}")
                 printed += 1
-                
+
         print("="*70 + "\n")
         
     elif args.ge_command == 'ingest-stats':
@@ -1009,32 +879,37 @@ def cmd_growth_engine(args):
             video_type=args.type
         )
         print(f"\n📊 Ingested analytics data: {json.dumps(res, indent=2)}")
+        return res
         
     elif args.ge_command == 'auto-ingest-stats':
         from core.growth_engine import auto_ingest_youtube_public_metrics
         print("\n⚙️ Autonomously querying YouTube API for video performance stats...")
         res = auto_ingest_youtube_public_metrics()
         print(f"\n📊 Ingestion result: {json.dumps(res, indent=2)}")
+        return res
         
     elif args.ge_command == 'run-feedback':
         from core.growth_engine import run_feedback_loop_analysis
         print("\n⚙️ Running Weekly Performance Feedback Loop Auto-Analysis...")
         res = run_feedback_loop_analysis()
         print(f"\n📊 Feedback Loop execution result: {json.dumps(res, indent=2, ensure_ascii=False)}")
+        return res
         
     elif args.ge_command == 'start-ab-test':
         from core.growth_engine import trigger_ab_test_experiment
         res = trigger_ab_test_experiment(variable_type=args.variable)
-        print(f"\n🧪 Started A/B Test: {json.dumps(res, indent=2)}")
+        print(f"\nA/B experiment availability: {json.dumps(res, indent=2)}")
+        return res
         
     elif args.ge_command == 'check-ab-tests':
         from core.growth_engine import evaluate_active_ab_tests
-        print("\n🔍 Evaluating active A/B tests and selecting winners...")
+        print("\nChecking experiment availability...")
         res = evaluate_active_ab_tests()
         if res:
             print(f"\n🎉 A/B test results: {json.dumps(res, indent=2)}")
         else:
             print("\nNo active A/B tests completed yet.")
+        return res
 
 
 def main():
@@ -1047,7 +922,7 @@ Examples:
   python main.py generate --surah 112        # Generate Surah Al-Ikhlas
   python main.py generate --verses 5         # Generate 5 verses per reel
   python main.py auto                        # Generate and upload
-  python main.py auto --test                 # Generate and upload as private
+  python main.py auto --test                 # Generate locally; no review or upload
   python main.py status                      # Show progress
   python main.py setup-youtube               # Set up YouTube auth
   python main.py longform list               # Show upcoming longform queue
@@ -1079,7 +954,7 @@ Examples:
     auto_parser = subparsers.add_parser('auto', help='Generate and upload automatically')
     auto_parser.add_argument('--verses', type=int, default=3, help='Number of verses per reel')
     auto_parser.add_argument('--reciter', type=str, help='Reciter key')
-    auto_parser.add_argument('--test', action='store_true', help='Upload as private for testing')
+    auto_parser.add_argument('--test', action='store_true', help='Generate locally; never review or upload')
     auto_parser.add_argument('--surah', type=int, help='Specific surah (optional)')
     auto_parser.add_argument('--start', type=int, help='Starting ayah (optional)')
     auto_parser.add_argument('--end', type=int, help='Ending ayah (optional)')
@@ -1091,7 +966,7 @@ Examples:
     batch_parser.add_argument('--delay', type=int, default=30, help='Seconds to wait between videos (default: 30)')
     batch_parser.add_argument('--verses', type=int, default=3, help='Verses per reel')
     batch_parser.add_argument('--reciter', type=str, help='Reciter key')
-    batch_parser.add_argument('--test', action='store_true', help='Upload as private for testing')
+    batch_parser.add_argument('--test', action='store_true', help='Generate locally; never review or upload')
     batch_parser.add_argument('--surah', type=int, help='Specific surah (optional)')
     batch_parser.add_argument('--start', type=int, help='Starting ayah (optional)')
     batch_parser.add_argument('--end', type=int, help='Ending ayah (optional)')
@@ -1146,7 +1021,7 @@ Examples:
     # Longform auto
     auto_lf_parser = lf_subparsers.add_parser('auto', help='Automatically compile next group and upload')
     auto_lf_parser.add_argument('--reciter', type=str, help='Reciter key')
-    auto_lf_parser.add_argument('--test', action='store_true', help='Upload as private/test')
+    auto_lf_parser.add_argument('--test', action='store_true', help='Skip automatic publishing in test mode')
     
     # Growth Engine commands subparser
     ge_parser = subparsers.add_parser('growth-engine', help='DailyQuran Growth Engine automation')
@@ -1166,8 +1041,8 @@ Examples:
     ingest_parser.add_argument('--views', type=int, required=True, help='Views count')
     ingest_parser.add_argument('--likes', type=int, default=0, help='Likes count')
     ingest_parser.add_argument('--comments', type=int, default=0, help='Comments count')
-    ingest_parser.add_argument('--retention', type=float, default=0.0, help='Retention rate (0.0 to 1.0)')
-    ingest_parser.add_argument('--ctr', type=float, default=0.0, help='Click-through rate (0.0 to 1.0)')
+    ingest_parser.add_argument('--retention', type=float, default=None, help='Measured retention rate (0.0 to 1.0), omitted when unavailable')
+    ingest_parser.add_argument('--ctr', type=float, default=None, help='Measured click-through rate (0.0 to 1.0), omitted when unavailable')
     ingest_parser.add_argument('--surah', type=int, required=True, help='Surah number')
     ingest_parser.add_argument('--reciter', type=str, required=True, help='Reciter key')
     ingest_parser.add_argument('--type', type=str, choices=['short', 'long'], required=True, help='Video type')
@@ -1186,6 +1061,7 @@ Examples:
     ge_subparsers.add_parser('auto-ingest-stats', help='Autonomously query YouTube API and ingest stats')
     
     args = parser.parse_args()
+    configure_logging(file_logging=not getattr(args,'dry_run',False))
     
     if args.command is None:
         parser.print_help()
@@ -1210,9 +1086,12 @@ Examples:
     if args.command in commands:
         # Initialize database
         from database.models import init_database
-        init_database()
+        if not getattr(args,'dry_run',False):
+            init_database()
         
-        commands[args.command](args)
+        result=commands[args.command](args)
+        if result is False or (isinstance(result,dict) and result.get('status') in ('failed','partial','auth_error')):
+            sys.exit(1)
     else:
         parser.print_help()
 

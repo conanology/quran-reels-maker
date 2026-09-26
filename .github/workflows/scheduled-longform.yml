@@ -1,133 +1,28 @@
 name: Scheduled Quran Long-Form Compilation
-
 on:
   schedule:
-    # Run every Sunday, Wednesday, and Friday at 03:00 UTC (5:00 AM Cairo / 6:00 AM Mecca Time)
+    # 03:00 UTC is 06:00 Asia/Riyadh; Cairo local time varies with DST.
     - cron: '0 3 * * 0,3,5'
-
-
   workflow_dispatch:
     inputs:
       reciter:
-        description: 'Reciter key (e.g., alafasy, shuraym, sudais, husary) - optional'
-        required: false
-        type: string
+        description: 'Reviewed reciter selection'
+        type: choice
+        default: auto
+        options: [auto, alafasy, shuraym, sudais, husary, shaatree, maher_muaiqly, abdul_basit_mujawwad, abdul_basit_murattal, minshawi_mujawwad, hudhaify, banna]
       test_mode:
-        description: 'Upload as private (test mode)'
-        required: false
-        default: false
+        description: 'Read-only preview; no rendering, uploads or notifications'
         type: boolean
-
+        default: true
 permissions:
-  contents: write
-
+  contents: read
+  actions: read
 jobs:
-  compile-and-upload:
-    runs-on: ubuntu-latest
-    timeout-minutes: 180  # Long-form video compilation can take a while
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick
-
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Verify import chain
-        run: |
-          # A broken dependency surfaces here in seconds instead of part-way
-          # through a job that budgets three hours.
-          python -c "import longform, core.growth_engine; print('import chain OK')"
-
-      - name: Restore YouTube credentials
-        run: |
-          echo '${{ secrets.YOUTUBE_TOKEN_JSON }}' > token.json
-          echo '${{ secrets.YOUTUBE_CLIENT_SECRETS }}' > client_secrets.json
-
-      - name: Ensure Amiri font exists
-        run: |
-          mkdir -p assets/fonts/amiri
-          if [ ! -f assets/fonts/amiri/Amiri-Bold.ttf ]; then
-            echo "Downloading Amiri font..."
-            curl -sL "https://github.com/aliftype/amiri/releases/download/1.000/Amiri-1.000.zip" -o /tmp/amiri.zip
-            unzip -jo /tmp/amiri.zip "*/Amiri-Bold.ttf" -d assets/fonts/amiri/ || true
-          fi
-
-      - name: Generate and upload long-form compilation
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          VIDEO_ENCODER: libx264  # Force CPU encoding on GitHub Actions runner
-          APPROVAL_REQUIRED: 'false'
-          IMAGEMAGICK_BINARY: /usr/bin/convert
-        run: |
-          TEST_FLAG=""
-          if [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
-            TEST_FLAG="--test"
-          fi
-          
-          RECITER_FLAG=""
-          if [ -n "${{ github.event.inputs.reciter }}" ]; then
-            RECITER_FLAG="--reciter ${{ github.event.inputs.reciter }}"
-          fi
-
-          python main.py longform auto $TEST_FLAG $RECITER_FLAG
-
-      - name: Commit compilation progress
-        if: always()
-        run: |
-          rm -f client_secrets.json token.json token.pickle
-          # Clean up large temporary/output video and audio files to prevent committing them to Git
-          rm -rf outputs/longform/downloads/*
-          rm -rf outputs/longform/backgrounds/*
-          rm -rf outputs/longform/output/*
-          rm -rf outputs/longform/temp/*
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Stage the database progress and background usage JSON tracking
-          git add database/quran_reels.db
-          if [ -f outputs/longform/background_usage.json ]; then
-            git add outputs/longform/background_usage.json
-          fi
-          
-          git diff --cached --quiet || {
-            git commit -m "Update Quran long-form progress and backgrounds database [skip ci]"
-            git reset --hard HEAD
-            git pull --rebase origin master
-            git push
-          }
-
-      - name: Alert on failure
-        if: failure()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          # Deliberately curl and not the Python notifier: when the failure is an
-          # import error, anything importing this project would fail to alert too.
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram secrets not configured; skipping alert."
-            exit 0
-          fi
-          curl -sS --max-time 30 -o /dev/null -X POST \
-            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=❌ Scheduled Quran Long-Form failed — ${RUN_URL}" \
-            || echo "Could not send Telegram alert."
-
+  publish:
+    uses: ./.github/workflows/publishing.yml
+    with:
+      route: longform
+      reciter: ${{ inputs.reciter || 'auto' }}
+      schedule: ${{ github.event.schedule || '' }}
+      test_mode: ${{ inputs.test_mode || false }}
+    secrets: inherit

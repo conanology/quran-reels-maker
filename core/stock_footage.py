@@ -75,7 +75,8 @@ def search_pexel_video(query: str) -> Optional[Dict]:
                 logger.debug(
                     f"Pexels '{query}' page {page}: {len(valid_videos)} candidates"
                 )
-                return random.choice(valid_videos)
+                from core.background_history import pick_pexels_video_candidate
+                return pick_pexels_video_candidate(valid_videos)
         except Exception as e:
             logger.error(f"Pexels search failed: {e}")
             return None
@@ -109,37 +110,23 @@ def download_video(video_data: Dict) -> Optional[Path]:
     filename = f"pexels_{video_data['id']}_{target_file['height']}p.mp4"
     output_path = DOWNLOAD_DIR / filename
     
-    # If already exists, return it
-    if output_path.exists():
-        return output_path
-        
-    logger.info(f"Downloading Pexels video: {video_data['id']} ({target_file['width']}x{target_file['height']})")
-    
+    from core.asset_provenance import download_background_asset
     try:
-        with requests.get(download_url, stream=True, timeout=30) as r:
-            r.raise_for_status()
-            with open(output_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        return output_path
-    except Exception as e:
-        logger.error(f"Failed to download video: {e}")
+        return download_background_asset(output_path, download_url, {
+            "provider": "Pexels", "video_id": video_data["id"],
+            "source_url": video_data.get("url"), "creator": video_data.get("user", {}).get("name"),
+            "creator_url": video_data.get("user", {}).get("url")})
+    except Exception as exc:
+        logger.warning("Background download/validation failed ({})", type(exc).__name__)
         return None
 
+
 def cleanup_cache(max_files: int = 20):
-    """Keep only the most recent files to save space."""
+    """Report the bounded cache; never evict a file another render may use."""
     ensure_download_dir()
     files = list(DOWNLOAD_DIR.glob("*.mp4"))
     if len(files) > max_files:
-        # Sort by modification time (oldest first)
-        files.sort(key=lambda x: x.stat().st_mtime)
-        files_to_delete = files[:len(files) - max_files]
-        for f in files_to_delete:
-            try:
-                f.unlink()
-                logger.debug(f"Deleted old cache file: {f.name}")
-            except Exception:
-                pass
+        logger.warning("Background cache exceeds configured budget; explicit inactive-asset archival is required")
 
 def _video_has_people(path: Path) -> bool:
     """Check if a video contains people, with logging."""
@@ -157,7 +144,19 @@ def get_dynamic_background() -> Optional[Path]:
     """
     ensure_download_dir()
 
-    cached_files = list(DOWNLOAD_DIR.glob("*.mp4"))
+    from core.background_history import record_background_usage, pick_background_candidate
+    from core.asset_provenance import validate_background
+    cached_files = []
+    for candidate in DOWNLOAD_DIR.glob("*.mp4"):
+        try:
+            validate_background(candidate)
+            cached_files.append(candidate)
+        except Exception:
+            continue
+    preferred = pick_background_candidate(cached_files)
+    if preferred in cached_files:
+        cached_files.remove(preferred)
+        cached_files.insert(0, preferred)
 
     # 20% chance to reuse an existing cached downloaded video to save API calls/bandwidth
     if cached_files and random.random() < 0.2:
@@ -165,6 +164,7 @@ def get_dynamic_background() -> Optional[Path]:
         for f in cached_files[:3]:
             if not _video_has_people(f):
                 logger.info("Using cached dynamic background")
+                record_background_usage(f, source="Pexels cache; review required")
                 return f
 
     # Fresh download with up to 3 retries using different queries
@@ -183,14 +183,15 @@ def get_dynamic_background() -> Optional[Path]:
             if path:
                 if not _video_has_people(path):
                     cleanup_cache()
+                    record_background_usage(path, source="Pexels; review required")
                     return path
-                else:
-                    path.unlink(missing_ok=True)
+                # Keep rejected cache evidence: another render may own this file.
 
     # Fallback: scan all cached for a clean one
     for f in cached_files:
         if not _video_has_people(f):
             logger.warning("Download failed, using cached file fallback")
+            record_background_usage(f, source="Pexels fallback; review required")
             return f
 
     return None

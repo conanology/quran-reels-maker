@@ -3,7 +3,7 @@ Database Initialization - Centralized schema creation for all modules.
 """
 from loguru import logger
 
-from database.models import Base as CoreBase, get_engine
+from database.models import Base as CoreBase, get_engine, init_database
 
 
 def init_all_databases():
@@ -15,7 +15,7 @@ def init_all_databases():
     engine = get_engine()
 
     # Create Core tables (VerseProgress, ReelHistory, AppSettings)
-    CoreBase.metadata.create_all(bind=engine)
+    init_database()
 
     # documentary/ is still being built and ships no models module, so its
     # schema is optional rather than fatal to initialising the core tables.

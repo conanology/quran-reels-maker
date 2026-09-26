@@ -32,13 +32,9 @@ class VerseSchedulerError(Exception):
 
 def is_friday() -> bool:
     """Check if today is Friday in the configured timezone."""
-    tz_name = os.getenv("TIMEZONE", "Africa/Cairo")
-    try:
-        tz = pytz.timezone(tz_name)
-        now = datetime.now(tz)
-        return now.weekday() == 4  # Friday is 4
-    except Exception:
-        return datetime.now().weekday() == 4
+    from config.settings import TIMEZONE
+    now = datetime.now(pytz.timezone(TIMEZONE))
+    return now.weekday() == 4
 
 
 def get_friday_verses() -> tuple:
@@ -80,10 +76,12 @@ def get_current_progress() -> Dict[str, Any]:
             )
             session.add(progress)
             session.commit()
+        if progress.current_surah not in VERSE_COUNTS or not 1 <= progress.current_ayah <= VERSE_COUNTS[progress.current_surah]:
+            raise VerseSchedulerError('Invalid journey cursor; explicit recovery is required')
         
         # Calculate percentage complete
         total_verses = sum(VERSE_COUNTS.values())
-        current_absolute = sum(VERSE_COUNTS[s] for s in range(1, progress.current_surah)) + progress.current_ayah
+        current_absolute = sum(VERSE_COUNTS[s] for s in range(1, progress.current_surah)) + progress.current_ayah - 1
         percentage = (current_absolute / total_verses) * 100
         
         return {
@@ -110,6 +108,8 @@ def get_next_verses(
     Returns:
         Tuple of (surah, start_ayah, end_ayah)
     """
+    if verses_count < 1:
+        raise VerseSchedulerError('Verse count must be positive')
     verses_count = min(verses_count, MAX_VERSES_PER_REEL)
     
     session = get_db_session()
@@ -122,6 +122,8 @@ def get_next_verses(
         
         surah = progress.current_surah
         start_ayah = progress.current_ayah
+        if surah not in VERSE_COUNTS or not 1 <= start_ayah <= VERSE_COUNTS[surah]:
+            raise VerseSchedulerError('Invalid journey cursor; explicit recovery is required')
         
         # Calculate end ayah
         max_ayah_in_surah = VERSE_COUNTS[surah]
@@ -133,52 +135,34 @@ def get_next_verses(
         session.close()
 
 
+def next_position(surah: int, last_ayah: int) -> tuple:
+    if surah not in VERSE_COUNTS or not 1 <= last_ayah <= VERSE_COUNTS[surah]:
+        raise VerseSchedulerError('Invalid published Quran range')
+    if last_ayah == VERSE_COUNTS[surah]:
+        return (surah + 1, 1) if surah < 114 else (1, 1)
+    return surah, last_ayah + 1
+
+
 def advance_progress(surah: int, last_ayah: int) -> Dict[str, Any]:
-    """
-    Advance the reading progress after a reel is generated.
-    
-    Args:
-        surah: Current surah number
-        last_ayah: Last ayah that was included in the reel
-        
-    Returns:
-        New progress info
-    """
-    session = get_db_session()
-    try:
-        progress = session.query(VerseProgress).first()
-        
-        if progress is None:
-            progress = VerseProgress(
-                current_surah=surah,
-                current_ayah=last_ayah + 1,
-                total_reels_generated=1
-            )
-            session.add(progress)
-        else:
-            progress.total_reels_generated += 1
-            
-            # Check if we finished this surah
-            if last_ayah >= VERSE_COUNTS[surah]:
-                # Move to next surah
-                if surah < 114:
-                    progress.current_surah = surah + 1
-                    progress.current_ayah = 1
-                else:
-                    # Completed the entire Quran! Reset to beginning
-                    progress.current_surah = 1
-                    progress.current_ayah = 1
-                    logger.info("🎉 Completed entire Quran! Starting from the beginning.")
+    """Advance confirmed sequential coverage; automatic flows use job finalization."""
+    from database.jobs import writer_lock
+    target_surah,target_ayah=next_position(surah,last_ayah)
+    with writer_lock():
+        session=get_db_session()
+        try:
+            progress=session.query(VerseProgress).first()
+            if progress is None:
+                session.add(VerseProgress(current_surah=target_surah,current_ayah=target_ayah,total_reels_generated=1))
+            elif progress.current_surah==surah:
+                progress.current_surah,progress.current_ayah=target_surah,target_ayah
+                progress.total_reels_generated+=1
             else:
-                # Continue in same surah
-                progress.current_ayah = last_ayah + 1
-        
-        session.commit()
-        
-        return get_current_progress()
-        
-    finally:
-        session.close()
+                # Friday and other thematic content has a separate reservation.
+                return get_current_progress()
+            session.commit()
+        finally:
+            session.close()
+    return get_current_progress()
 
 
 def record_reel_history(
@@ -311,59 +295,35 @@ def check_if_already_posted(surah: int, start_ayah: int, end_ayah: int) -> bool:
 
 
 def reset_progress() -> None:
-    """Reset progress to start of Quran. Use with caution!"""
-    session = get_db_session()
-    try:
-        progress = session.query(VerseProgress).first()
-        if progress:
-            progress.current_surah = 1
-            progress.current_ayah = 1
-            # Don't reset total_reels_generated
-            session.commit()
-            logger.info("Progress reset to Surah 1, Ayah 1")
-    finally:
-        session.close()
+    """Explicit owner reset also reconciles a legacy publication cursor."""
+    set_progress(1,1)
 
 
 def set_progress(surah: int, ayah: int) -> Dict[str, Any]:
-    """
-    Manually set the current progress.
-    
-    Args:
-        surah: Surah number to set
-        ayah: Ayah number to set
-        
-    Returns:
-        New progress info
-    """
-    # Validate
-    if surah < 1 or surah > 114:
-        raise VerseSchedulerError(f"Invalid surah number: {surah}")
-    
-    max_ayah = VERSE_COUNTS[surah]
-    if ayah < 1 or ayah > max_ayah:
-        raise VerseSchedulerError(f"Invalid ayah {ayah} for surah {surah} (max: {max_ayah})")
-    
-    session = get_db_session()
-    try:
-        progress = session.query(VerseProgress).first()
-        if progress is None:
-            progress = VerseProgress(
-                current_surah=surah,
-                current_ayah=ayah,
-                total_reels_generated=0
-            )
-            session.add(progress)
-        else:
-            progress.current_surah = surah
-            progress.current_ayah = ayah
-        
-        session.commit()
-        logger.info(f"Progress set to Surah {surah}, Ayah {ayah}")
-        
-        return get_current_progress()
-    finally:
-        session.close()
+    """Explicit owner reconciliation of the next unpublished Quran position."""
+    if surah not in VERSE_COUNTS:
+        raise VerseSchedulerError(f'Invalid surah number: {surah}')
+    if not 1 <= ayah <= VERSE_COUNTS[surah]:
+        raise VerseSchedulerError(f'Invalid ayah {ayah} for surah {surah} (max: {VERSE_COUNTS[surah]})')
+    from database.jobs import writer_lock
+    from database.models import AppSettings
+    with writer_lock():
+        init_database()
+        session=get_db_session()
+        try:
+            progress=session.query(VerseProgress).first()
+            if progress is None:
+                progress=VerseProgress(current_surah=surah,current_ayah=ayah,total_reels_generated=0)
+                session.add(progress)
+            else:
+                progress.current_surah,progress.current_ayah=surah,ayah
+            marker=session.query(AppSettings).filter_by(key='publication_cursor_verified').one()
+            marker.value='true'
+            session.commit()
+        finally:
+            session.close()
+    logger.info(f'Publication cursor reconciled to Surah {surah}, Ayah {ayah}')
+    return get_current_progress()
 
 
 def get_statistics() -> Dict[str, Any]:

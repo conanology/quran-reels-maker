@@ -10,15 +10,32 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+
+def _env_int(name, default, minimum, maximum):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _env_choice(name, default, choices):
+    value = os.getenv(name, default).strip() or default
+    if value not in choices:
+        raise ValueError(f"Unsupported {name}: choose one of {', '.join(choices)}")
+    return value
+
 # =============================================================================
 # PATH CONFIGURATION
 # =============================================================================
 
 # Base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
-ASSETS_DIR = BASE_DIR / "assets"
-OUTPUTS_DIR = BASE_DIR / "outputs"
-DATABASE_DIR = BASE_DIR / "database"
+ASSETS_DIR = Path(os.getenv("QRM_ASSETS_DIR", str(BASE_DIR / "assets"))).resolve()
+OUTPUTS_DIR = Path(os.getenv("QRM_OUTPUTS_DIR", str(BASE_DIR / "outputs"))).resolve()
+DATABASE_DIR = Path(os.getenv("QRM_DATABASE_DIR", str(BASE_DIR / "database"))).resolve()
 
 # Asset paths
 FONTS_DIR = ASSETS_DIR / "fonts"
@@ -29,7 +46,7 @@ VIDEOS_DIR = OUTPUTS_DIR / "videos"
 AUDIO_DIR = OUTPUTS_DIR / "audio"
 
 # Database
-DATABASE_PATH = DATABASE_DIR / "quran_reels.db"
+DATABASE_PATH = Path(os.getenv("QRM_DATABASE_PATH", str(DATABASE_DIR / "quran_reels.db"))).resolve()
 
 # YouTube credentials
 YOUTUBE_CLIENT_SECRETS = BASE_DIR / "client_secrets.json"
@@ -41,9 +58,7 @@ TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_TOKEN_PATH = BASE_DIR / "token_tiktok.json"
 TIKTOK_REDIRECT_URI = os.getenv("TIKTOK_REDIRECT_URI", "https://localhost:8080/")
 
-# Create directories if they don't exist
-for directory in [FONTS_DIR, BACKGROUNDS_DIR, VIDEOS_DIR, AUDIO_DIR, DATABASE_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
+# Directories are created by the operation that owns them, never on import.
 
 # =============================================================================
 # VIDEO SETTINGS (Shorts - 9:16)
@@ -61,23 +76,30 @@ AUDIO_BITRATE = "192k"
 # =============================================================================
 
 def _detect_encoder() -> str:
-    """Auto-detect h264_nvenc GPU encoder, fall back to libx264."""
+    """Explicit runtime hardware probe, not an import-time encoder advertisement."""
     # Allow explicit override via environment variable
     override = os.getenv("VIDEO_ENCODER")
-    if override:
+    if override and override != "auto":
+        if override not in {"libx264", "h264_nvenc"}:
+            raise ValueError("VIDEO_ENCODER must be libx264, h264_nvenc, or auto")
         return override
     try:
         result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True, text=True, timeout=5
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=s=320x180:d=0.04", "-frames:v", "1", "-c:v",
+             "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=10
         )
-        if "h264_nvenc" in result.stdout:
+        if result.returncode == 0:
             return "h264_nvenc"
     except Exception:
         pass
     return "libx264"
 
-DETECTED_ENCODER = _detect_encoder()
+# CPU is portable and deterministic; selecting auto is an explicit runtime action.
+DETECTED_ENCODER = _env_choice("VIDEO_ENCODER", "libx264", ["libx264", "h264_nvenc", "auto"])
+if DETECTED_ENCODER == "auto":
+    DETECTED_ENCODER = "libx264"
 
 # NVENC-specific encoding params (RTX 2080 Ti optimized)
 NVENC_PARAMS = [
@@ -112,9 +134,12 @@ LONGFORM_BACKGROUNDS_DIR = LONGFORM_DIR / "backgrounds"
 LONGFORM_OUTPUT_DIR = LONGFORM_DIR / "output"
 LONGFORM_TEMP_DIR = LONGFORM_DIR / "temp"
 
-for _d in [LONGFORM_DIR, LONGFORM_DOWNLOADS_DIR, LONGFORM_BACKGROUNDS_DIR,
-           LONGFORM_OUTPUT_DIR, LONGFORM_TEMP_DIR]:
-    _d.mkdir(parents=True, exist_ok=True)
+def ensure_runtime_directories():
+    """Call only for an actual operation, never for help/import/dry-run."""
+    for directory in [VIDEOS_DIR, AUDIO_DIR, DATABASE_PATH.parent, LONGFORM_DIR,
+                      LONGFORM_DOWNLOADS_DIR, LONGFORM_BACKGROUNDS_DIR,
+                      LONGFORM_OUTPUT_DIR, LONGFORM_TEMP_DIR]:
+        directory.mkdir(parents=True, exist_ok=True)
 
 # Text overlay settings
 FONT_PATH = str(FONTS_DIR / "amiri" / "Amiri-Bold.ttf")
@@ -140,7 +165,7 @@ QURAN_AUDIO_BASE = "https://everyayah.com/data/{reciter}/{surah:03d}{ayah:03d}.m
 # Default verses per reel
 DEFAULT_VERSES_PER_REEL = 3
 MAX_VERSES_PER_REEL = 10
-MAX_REEL_DURATION_SECONDS = 59  # YouTube Shorts limit
+MAX_REEL_DURATION_SECONDS = _env_int("MAX_REEL_DURATION_SECONDS", 59, 1, 180)  # product target
 MIN_REEL_DURATION_SECONDS = 30  # Minimum duration for engagement
 
 # Video effect settings (extracted from video_generator.py)
@@ -199,7 +224,7 @@ RECITERS = {
     },
     "hudhaify": {
         "id": "Hudhaify_64kbps",
-        "name_ar": "الشيخ عبدالله الحذيفي",
+        "name_ar": "الشيخ علي الحذيفي",
         "name_en": "Ali Al-Hudhaify"
     },
     "shaatree": {
@@ -215,7 +240,7 @@ RECITERS = {
 }
 
 # Default reciter
-DEFAULT_RECITER = "alafasy"
+DEFAULT_RECITER = _env_choice("DEFAULT_RECITER", "alafasy", list(RECITERS))
 
 # =============================================================================
 # SURAH DATA
@@ -305,18 +330,23 @@ YOUTUBE_DESCRIPTION_TEMPLATE = """🕌 {full_text}
 # =============================================================================
 
 # Time to post daily (24-hour format)
-DAILY_POST_HOUR = 6
-DAILY_POST_MINUTE = 0
+DAILY_POST_HOUR = _env_int("DAILY_POST_HOUR", 6, 0, 23)
+DAILY_POST_MINUTE = _env_int("DAILY_POST_MINUTE", 0, 0, 59)
 
 # Timezone
-TIMEZONE = "Africa/Cairo"  # Egypt timezone (UTC+2)
+TIMEZONE = os.getenv("TIMEZONE", "Africa/Cairo")
+from pytz import timezone as _timezone
+try:
+    _timezone(TIMEZONE)
+except Exception as exc:
+    raise ValueError("TIMEZONE must be a valid IANA timezone") from exc
 
 # =============================================================================
 # LOGGING
 # =============================================================================
 
-LOG_FILE = BASE_DIR / "quran_reels.log"
-LOG_LEVEL = "INFO"
+LOG_FILE = Path(os.getenv("QRM_LOG_FILE", str(OUTPUTS_DIR / "quran_reels.log")))
+LOG_LEVEL = _env_choice("LOG_LEVEL", "INFO", ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"])
 LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
 
 # =============================================================================

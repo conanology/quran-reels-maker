@@ -38,18 +38,15 @@ from core.style_config import StyleConfig, DEFAULT_STYLE
 
 
 # ---------------------------------------------------------------------------
-# Uthmani mark stripping
+# Uthmani source preservation
 # ---------------------------------------------------------------------------
 
-# Uthmani-specific marks (U+06D6–U+06ED) that may render as squares in
-# common fonts like Dubai.  Standard Arabic diacritics (U+064B–U+0652)
-# are intentionally preserved.
-_UTHMANI_STRIP_RE = re.compile("[\u06D6-\u06ED]")
+# Source Uthmani marks are preserved. A missing glyph/font is a render error.
 
 
 def _clean_arabic(text: str) -> str:
-    """Strip Uthmani-specific small marks that the current font may not support."""
-    return _UTHMANI_STRIP_RE.sub("", text)
+    """Preserve Quran source codepoints; font limitations cannot justify deletion."""
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -70,13 +67,10 @@ def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
 
 
 def _load_font(font_path: str, size: int) -> ImageFont.FreeTypeFont:
-    """Load a TrueType font, falling back to default."""
+    """Load the required font without replacing Quran glyphs with a default."""
     if os.path.exists(font_path):
         return ImageFont.truetype(font_path, size)
-    try:
-        return ImageFont.truetype("Arial", size)
-    except OSError:
-        return ImageFont.load_default()
+    raise FileNotFoundError(f"Required Arabic font is missing: {font_path}")
 
 
 def wrap_text(text: str, words_per_line: int) -> str:
@@ -139,8 +133,10 @@ class PILTextRenderer:
         Render text with stroke and shadow to an RGBA numpy array.
         Uses native PIL direction='rtl' for Arabic text (preserves diacritics).
         """
-        # Strip Uthmani marks that may render as squares
+        # Preserve original Quran codepoints through shaping.
         if is_arabic:
+            if not self._has_raqm and not _HAS_BIDI:
+                raise RuntimeError("Arabic rendering requires Pillow raqm or arabic-reshaper with python-bidi")
             text = _clean_arabic(text)
 
         cache_key = f"{text}|{font_size}|{color}|{max_width}|{words_per_line}"
@@ -246,7 +242,7 @@ _renderer: Optional[PILTextRenderer] = None
 
 def _get_renderer(style: StyleConfig = DEFAULT_STYLE) -> PILTextRenderer:
     global _renderer
-    if _renderer is None:
+    if _renderer is None or _renderer.style != style:
         _renderer = PILTextRenderer(style)
     return _renderer
 
@@ -402,10 +398,11 @@ def _make_centered_frame(
 
     # Scale down if text is wider than video (with 40px margin each side)
     max_w = video_w - 80
-    if tw > max_w and tw > 0:
-        scale = max_w / tw
-        new_w = int(tw * scale)
-        new_h = int(th * scale)
+    max_h = int(video_h * 0.65)
+    if (tw > max_w or th > max_h) and tw > 0 and th > 0:
+        scale = min(max_w / tw, max_h / th)
+        new_w = max(1, int(tw * scale))
+        new_h = max(1, int(th * scale))
         pil_img = Image.fromarray(rgba_array)
         pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
         rgba_array = np.array(pil_img)

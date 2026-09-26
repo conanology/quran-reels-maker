@@ -1,0 +1,103 @@
+name: Verified serialized publishing runner
+on:
+  workflow_call:
+    inputs:
+      route: {type: string, required: true}
+      slot: {type: string, default: auto}
+      reciter: {type: string, default: auto}
+      schedule: {type: string, default: ''}
+      dry_run: {type: boolean, default: false}
+      test_mode: {type: boolean, default: false}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: qrm-publishing-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  run:
+    # Enable after domain/account/state review; previews remain available.
+    if: inputs.dry_run || inputs.test_mode || (vars.AUTOMATED_PUBLISHING_ENABLED == 'true' && github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      VIDEO_ENCODER: libx264
+      PYTHON_DOTENV_DISABLED: '1'
+      ENABLE_AI_METADATA: 'false'
+      ENABLE_TIKTOK_AUTOPUBLISH: 'false'
+      QRM_ROUTE: ${{ inputs.route }}
+      QRM_SLOT: ${{ inputs.slot }}
+      QRM_RECITER: ${{ inputs.reciter }}
+      QRM_SCHEDULE: ${{ inputs.schedule }}
+      QRM_DRY_RUN: ${{ inputs.dry_run }}
+      QRM_TEST_MODE: ${{ inputs.test_mode }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install bounded dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+          python -m pip install -r requirements.txt
+          python -m pip install -r quran_compiler/backend/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Safe regression gate
+        env:
+          QRM_DATABASE_PATH: ${{ runner.temp }}/qrm-checks/state.db
+          QRM_DATABASE_DIR: ${{ runner.temp }}/qrm-checks
+          QRM_OUTPUTS_DIR: ${{ runner.temp }}/qrm-checks/outputs
+          QRM_LOG_FILE: ${{ runner.temp }}/qrm-checks/test.log
+        run: python -m pytest tests -p no:cacheprovider
+      - name: Restore durable publishing state
+        id: restore
+        if: '!inputs.dry_run && !inputs.test_mode'
+        env:
+          QRM_ALLOW_STATE_BOOTSTRAP: ${{ vars.QRM_ALLOW_STATE_BOOTSTRAP }}
+        run: python scripts/ci_state.py restore
+      - name: Restore credentials without shell interpolation
+        if: '!inputs.dry_run && !inputs.test_mode'
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          YOUTUBE_CLIENT_SECRETS_JSON: ${{ secrets.YOUTUBE_CLIENT_SECRETS }}
+          TIKTOK_TOKEN_JSON: ${{ secrets.TIKTOK_TOKEN_JSON }}
+        run: python scripts/ci_state.py credentials
+      - name: Generate or publish intended occurrence
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_APPROVER_ID: ${{ secrets.TELEGRAM_APPROVER_ID }}
+          YOUTUBE_EXPECTED_CHANNEL_ID: ${{ vars.YOUTUBE_EXPECTED_CHANNEL_ID }}
+          TIKTOK_EXPECTED_OPEN_ID: ${{ vars.TIKTOK_EXPECTED_OPEN_ID }}
+          IMAGEMAGICK_BINARY: /usr/bin/convert
+        run: python scripts/ci_run.py
+      - name: Save state including uncertain receipts on failure
+        id: checkpoint
+        if: always() && steps.restore.outcome == 'success'
+        run: python scripts/ci_state.py checkpoint
+      - name: Persist authoritative state
+        if: always() && steps.checkpoint.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qrm-publishing-state
+          path: .ci-state/
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 90
+          if-no-files-found: error
+      - name: Preserve generated media and recovery evidence
+        if: always() && !inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: qrm-media-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            outputs/videos/
+            outputs/longform/output/
+            database/upload_receipts/
+            database/upload_attempts/
+          retention-days: 14
+          if-no-files-found: ignore

@@ -10,12 +10,7 @@ import logging
 import re
 from typing import Any
 
-from core.quran_v4_api import (
-    get_multiple_ayat,
-    get_ayah_translation,
-    get_surah_name,
-    validate_verse_range,
-)
+# Quran text helpers are imported only when resolving a payload, not at collection.
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +58,20 @@ def parse_quran_ref(quran_ref: str) -> tuple[int, int, int] | None:
 
 
 def resolve_quran_verse_payload(quran_ref: str, *, translation_lang: str = "en") -> QuranVersePayload | None:
+    from core.quran_api import get_multiple_ayat, get_ayah_translation, get_surah_name, validate_verse_range
     parsed = parse_quran_ref(quran_ref)
     if not parsed:
         return None
 
     surah, start_ayah, end_ayah = parsed
-    start_ayah, end_ayah = validate_verse_range(surah, start_ayah, end_ayah)
+    validated = validate_verse_range(surah, start_ayah, end_ayah)
+    if validated != (start_ayah, end_ayah):
+        raise ValueError("Documentary Quran reference is outside the requested verse range.")
 
     ayat = get_multiple_ayat(surah, start_ayah, end_ayah)
+    expected = list(range(start_ayah, end_ayah + 1))
+    if [a.get("ayah") for a in ayat] != expected or any(not str(a.get("text") or "").strip() for a in ayat):
+        raise ValueError("Documentary Quran text is incomplete or out of order.")
     arabic_parts = []
     trans_parts = []
     for a in ayat:
@@ -79,8 +80,9 @@ def resolve_quran_verse_payload(quran_ref: str, *, translation_lang: str = "en")
         if text:
             arabic_parts.append(f"{text} \uFD3F{anum}\uFD3E")
         t = get_ayah_translation(surah, anum, translation_lang)
-        if t:
-            trans_parts.append(str(t).strip())
+        if not t:
+            raise ValueError("Documentary translation is incomplete; no complete translated payload can be issued.")
+        trans_parts.append(str(t).strip())
 
     if not arabic_parts:
         logger.warning("No Qur'an text resolved for ref %s", quran_ref)
@@ -103,6 +105,7 @@ def resolve_quran_verse_payload(quran_ref: str, *, translation_lang: str = "en")
         translation_text=" ".join(trans_parts).strip(),
         citation_en=citation_en,
         citation_ar=citation_ar,
+        translation_source="Sahih International" if translation_lang == "en" else "Source requires review",
     )
 
 
@@ -112,4 +115,3 @@ def write_quran_payload_snapshot(output_path: Path, payloads: list[QuranVersePay
     data = [p.to_dict() for p in payloads]
     output_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return output_path
-

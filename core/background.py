@@ -80,7 +80,13 @@ def pick_random_background() -> Path:
             "Please add some .mp4 files to the assets/backgrounds folder."
         )
 
-    selected = random.choice(videos)
+    from core.background_history import pick_background_candidate, record_background_usage
+    from core.person_detector import inspect_people
+    videos = [path for path in videos if inspect_people(path)["status"] != "people_detected"]
+    selected = pick_background_candidate(videos)
+    if selected is None:
+        raise BackgroundError("No eligible local backgrounds; add a reviewed asset")
+    record_background_usage(selected, source="local; visual/source review required")
     logger.debug(f"Selected background: {selected.name}")
     return selected
 

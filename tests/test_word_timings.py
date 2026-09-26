@@ -10,12 +10,13 @@ import pytest
 from core.word_timings import WordTimingError, get_word_timings, parse_segments
 
 
-def _api_response(segments, words):
+def _api_response(segments, words, verse_key="112:1"):
     return {
         "verse": {
+            "verse_key": verse_key,
             "audio": {"url": "Alafasy/mp3/112001.mp3", "segments": segments},
             "words": [
-                {"char_type_name": "word", "text_uthmani": w} for w in words
+                {"char_type_name": "word", "text_uthmani": w, "position": i + 1} for i, w in enumerate(words)
             ]
             + [{"char_type_name": "end", "text_uthmani": "۝"}],
         }

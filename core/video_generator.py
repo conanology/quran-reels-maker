@@ -9,6 +9,10 @@ Slim orchestrator that delegates to:
 """
 import os
 import datetime
+import tempfile
+import time
+import hashlib
+from bisect import bisect_right
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -60,6 +64,9 @@ from core.background import (
     load_and_grade_background,
 )
 from core.word_timings import WordTimingError, get_word_timings
+from core.utils import close_media_resources, file_sha256, verify_media_streams, write_media_manifest
+from core.runtime_safety import exclusive_lock, atomic_write_json
+from core.asset_provenance import get_asset_provenance
 
 # Intermediate per-word frames. Sits under the videos dir so the workflow's
 # existing render cleanup removes them.
@@ -82,6 +89,8 @@ def download_ai_background(translation: str) -> Optional[Path]:
     import requests
     import urllib.parse
     from core.ai_brain import generate_visual_prompt
+    if os.getenv("ENABLE_AI_BACKGROUNDS", os.getenv("ALLOW_AI_BACKGROUNDS", "false")).lower() != "true":
+        return None
     
     # 1. Generate prompt from translation
     visual_prompt = generate_visual_prompt(translation)
@@ -96,20 +105,41 @@ def download_ai_background(translation: str) -> Optional[Path]:
     from config.settings import ASSETS_DIR
     download_dir = ASSETS_DIR / "downloaded_bg"
     download_dir.mkdir(parents=True, exist_ok=True)
-    output_path = download_dir / f"ai_bg_{int(time.time())}.jpg"
+    descriptor, filename = tempfile.mkstemp(prefix="ai_bg_", suffix=".part", dir=download_dir)
+    os.close(descriptor)
+    partial_path = Path(filename)
+    output_path = partial_path.with_suffix(".jpg")
     
     logger.info(f"Downloading themed AI background from Pollinations: {output_path.name}")
     try:
-        response = requests.get(url, timeout=60)
-        if response.status_code == 200:
-            with open(output_path, "wb") as f:
-                f.write(response.content)
-            return output_path
-        else:
-            logger.error(f"Pollinations API error: {response.status_code}")
-            return None
+        deadline = time.monotonic() + 120
+        with requests.get(url, stream=True, timeout=(10, 30)) as response, partial_path.open("wb") as destination:
+            response.raise_for_status()
+            size = 0
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > 12 * 1024 * 1024 or time.monotonic() > deadline:
+                    raise ValueError("Generated background exceeded image size/time bound")
+                destination.write(chunk)
+            destination.flush()
+            os.fsync(destination.fileno())
+        with Image.open(partial_path) as generated:
+            width, height = generated.size
+            if width <= 0 or height <= 0 or width * height > 30_000_000 or generated.format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError("Generated background is not a supported bounded image")
+            generated.verify()
+        os.replace(partial_path, output_path)
+        atomic_write_json(Path(str(output_path) + ".source.json"), {
+            "provider": "Pollinations", "generated": True, "requested_model": "flux",
+            "prompt_sha256": hashlib.sha256(visual_prompt.encode("utf-8")).hexdigest(),
+            "width": width, "height": height, "sha256": file_sha256(output_path),
+            "license_review_required": True, "content_review_required": True,
+        })
+        return output_path
     except Exception as e:
         logger.error(f"Failed to download AI background: {e}")
+        output_path.unlink(missing_ok=True)
+        partial_path.unlink(missing_ok=True)
         return None
 
 
@@ -128,17 +158,18 @@ def get_audio_duration_moviepy(audio_path: Path) -> float:
             return clip.duration
     except Exception as e:
         logger.error(f"Could not get duration for {audio_path}: {e}")
-        return 5.0
+        raise VideoGeneratorError(f"Could not measure ayah audio: {audio_path.name}") from e
 
 
 def _build_karaoke_clips(timing, display_duration, style, output_dir, prefix):
     """
-    One clip per recited word, each holding until the next word begins.
+    One lazy clip holding each highlighted word until the next word begins.
 
     Scheduling on the next word's start rather than this word's end avoids the
     gaps that would otherwise appear between words, where no text would show.
     """
-    from moviepy.editor import ImageClip
+    from moviepy.editor import VideoClip
+    import numpy as np
 
     from core.karaoke_renderer import KaraokeStyle, render_word_states
 
@@ -149,21 +180,21 @@ def _build_karaoke_clips(timing, display_duration, style, output_dir, prefix):
         height=style.video_height,
     )
     paths = render_word_states(timing.words, output_dir, karaoke_style, prefix=prefix)
-    spans = timing.spans_seconds()
-
-    clips = []
-    for index, (path, (start, _end)) in enumerate(zip(paths, spans)):
-        if start >= display_duration:
-            break
-        next_start = (
-            spans[index + 1][0] if index + 1 < len(spans) else display_duration
-        )
-        duration = min(next_start, display_duration) - start
-        if duration <= 0:
-            continue
-        clips.append(ImageClip(str(path)).set_duration(duration).set_start(start))
-
-    return clips
+    timing.validate_for_audio(display_duration)
+    starts = [value / 1000 for value in timing.starts_ms]
+    # Keep only the current full-frame state in memory, rather than one RGB and
+    # floating alpha array per word. PNG states remain in this job's directory.
+    cache = {"index": None, "rgba": None}
+    def rgba_at(t):
+        index = max(0, bisect_right(starts, t) - 1)
+        if cache["index"] != index:
+            with Image.open(paths[index]) as image:
+                cache["rgba"] = np.array(image.convert("RGBA"))
+            cache["index"] = index
+        return cache["rgba"]
+    clip = VideoClip(lambda t: rgba_at(t)[:, :, :3], duration=display_duration)
+    mask = VideoClip(lambda t: rgba_at(t)[:, :, 3].astype(np.float32) / 255, duration=display_duration, ismask=True)
+    return [clip.set_mask(mask)]
 
 
 def generate_reel(
@@ -173,6 +204,19 @@ def generate_reel(
     reciter_key: str = DEFAULT_RECITER,
     output_path: Optional[Path] = None,
     style: StyleConfig = DEFAULT_STYLE,
+) -> Tuple[Path, int, int]:
+    """Render into a private job directory and close every source on failure."""
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    resources = []
+    with tempfile.TemporaryDirectory(prefix="reel_", dir=VIDEOS_DIR) as name:
+        try:
+            return _generate_reel(surah, start_ayah, end_ayah, reciter_key, output_path, style, Path(name), resources)
+        finally:
+            close_media_resources(resources)
+
+
+def _generate_reel(
+    surah, start_ayah, end_ayah, reciter_key, output_path, style, job_dir, resources
 ) -> Tuple[Path, int, int]:
     """
     Generate a complete Quran reel video with continuous background.
@@ -208,7 +252,11 @@ def generate_reel(
     # Reserve time for intro frame if enabled
     max_content_duration = MAX_REEL_DURATION_SECONDS - (INTRO_DURATION if ENABLE_INTRO_FRAME else 0)
 
-    cleanup_audio_files(AUDIO_DIR)
+    if reciter_key not in RECITERS:
+        raise VideoGeneratorError(f"Unknown reciter: {reciter_key}")
+    audio_dir = job_dir / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    karaoke_dir = job_dir / "karaoke"
 
     # === STEP 1: Download audio and calculate timings ===
     ayah_data = []
@@ -219,11 +267,16 @@ def generate_reel(
     # Fetch requested ayahs (stop early if we'd exceed max duration)
     while current_ayah <= end_ayah:
         data = fetch_single_ayah(
-            surah, current_ayah, reciter_key, AUDIO_DIR,
+            surah, current_ayah, reciter_key, audio_dir,
             get_audio_duration_moviepy, current_time, style.ayah_padding,
         )
         projected_duration = data["segment_end"] + 0.5
         # Stop adding ayahs if this one would push us over the max
+        if not ayah_data and projected_duration > max_content_duration:
+            raise VideoGeneratorError(
+                f"Complete ayah {surah}:{current_ayah} requires {projected_duration:.1f}s; "
+                f"it exceeds the {max_content_duration:.0f}s reel target. Generate longform instead."
+            )
         if ayah_data and projected_duration > max_content_duration:
             logger.warning(
                 f"Ayah {current_ayah} would push duration to {projected_duration:.1f}s "
@@ -246,7 +299,7 @@ def generate_reel(
            and current_ayah <= max_ayah
            and total_duration < max_content_duration):
         data = fetch_single_ayah(
-            surah, current_ayah, reciter_key, AUDIO_DIR,
+            surah, current_ayah, reciter_key, audio_dir,
             get_audio_duration_moviepy, current_time, style.ayah_padding,
         )
         projected_duration = data["segment_end"] + 0.5
@@ -271,18 +324,11 @@ def generate_reel(
         current_ayah += 1
         end_ayah = current_ayah - 1
 
-    # Hard-cap total duration to max (safety net)
-    if total_duration > max_content_duration:
-        logger.warning(
-            f"Capping duration from {total_duration:.1f}s to {max_content_duration:.0f}s"
-        )
-        total_duration = max_content_duration
-
     logger.info(f"Final verses: {start_ayah}-{end_ayah} ({len(ayah_data)} ayahs)")
     logger.info(f"Total video duration: {total_duration:.1f}s")
 
     # === STEP 3: Background ===
-    full_translation = " ".join(item.get("translation", "") for item in ayah_data).strip()
+    full_translation = " ".join(item.get("translation") or "" for item in ayah_data).strip()
     background_path = None
     
     # Real footage first. The Pollinations endpoint ignores the requested model
@@ -319,6 +365,8 @@ def generate_reel(
     bg_with_grading = load_and_grade_background(
         background_path, total_duration, style, enable_ken_burns=ENABLE_KEN_BURNS,
     )
+    resources.append(bg_with_grading)
+    bg_with_grading = bg_with_grading.fadein(style.video_fade).fadeout(style.video_fade)
 
     # === STEP 4: Text overlays ===
     text_clips = []
@@ -328,11 +376,7 @@ def generate_reel(
 
         # Arabic text: highlight each word as it is recited when real per-word
         # timings exist, otherwise show the whole ayah for its duration.
-        timing = None
-        try:
-            timing = get_word_timings(reciter_key, surah, data["ayah"])
-        except WordTimingError as e:
-            logger.warning(f"No usable word timings for ayah {data['ayah']}: {e}")
+        timing = data["word_timing"]
 
         karaoke_clips = []
         if timing:
@@ -340,7 +384,7 @@ def generate_reel(
                 timing,
                 display_duration,
                 style,
-                KARAOKE_DIR,
+                karaoke_dir,
                 prefix=f"{surah}_{data['ayah']}",
             )
 
@@ -355,9 +399,6 @@ def generate_reel(
             text_clip = create_text_clip(data["text"], display_duration, style=style)
             if text_clip:
                 text_clip = text_clip.set_start(data["start_time"])
-                text_clip = text_clip.crossfadein(style.text_fade_in).crossfadeout(
-                    style.text_fade_out
-                )
                 text_clips.append(text_clip)
 
         # Ayah number
@@ -376,6 +417,7 @@ def generate_reel(
     surah_label = create_surah_label(surah_name, total_duration, style=style)
     if surah_label:
         text_clips.append(surah_label)
+    resources.extend(text_clips)
 
     # === STEP 5: Audio track ===
     audio_clips = []
@@ -383,6 +425,7 @@ def generate_reel(
 
     for i, data in enumerate(ayah_data):
         audio_clip = AudioFileClip(str(data["audio_path"]))
+        resources.append(audio_clip)
         max_duration = data["audio_duration"]
         if audio_clip.duration > max_duration:
             logger.warning(
@@ -392,7 +435,6 @@ def generate_reel(
             audio_clip = audio_clip.subclip(0, max_duration)
 
         audio_clip = audio_clip.set_start(data["start_time"])
-        audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
 
         logger.debug(
             f"Audio clip {i+1}: ayah={data['ayah']}, "
@@ -401,60 +443,50 @@ def generate_reel(
         audio_clips.append(audio_clip)
 
     combined_audio = CompositeAudioClip(audio_clips)
+    resources.append(combined_audio)
     logger.info(f"Combined audio duration: {combined_audio.duration:.2f}s")
 
     # Ambient sound
     from core.audio_processor import get_ambient_sound, AMBIENT_ENABLED
     if AMBIENT_ENABLED:
-        ambient_path = get_ambient_sound(total_duration)
+        ambient_path = get_ambient_sound(total_duration, output_dir=audio_dir)
         if ambient_path:
             ambient_clip = AudioFileClip(str(ambient_path)).set_duration(total_duration)
+            resources.append(ambient_clip)
             combined_audio = CompositeAudioClip([combined_audio, ambient_clip])
-
-    # Write combined audio to a temp file; ffmpeg will pad silence automatically
-    import tempfile
-    temp_audio_path = Path(tempfile.mktemp(suffix=".mp3", dir=str(AUDIO_DIR)))
-    combined_audio.write_audiofile(
-        str(temp_audio_path), fps=44100, codec="libmp3lame",
-        bitrate=AUDIO_BITRATE, verbose=False, logger=None,
-    )
-    logger.info(f"Wrote temp audio: {temp_audio_path}")
+            resources.append(combined_audio)
 
     # === STEP 6: Composite final video ===
     logger.info("Compositing video with enhanced overlays...")
 
     final_video = CompositeVideoClip(
         [bg_with_grading] + text_clips,
-        size=(VIDEO_WIDTH, VIDEO_HEIGHT),
+        size=(style.video_width, style.video_height),
     )
+    resources.append(final_video)
     final_video = final_video.set_duration(total_duration)
-    final_video = final_video.fadein(style.video_fade).fadeout(style.video_fade)
     final_video.fps = VIDEO_FPS
-    # Audio is passed directly to write_videofile via audio= parameter
+    # Audio is attached after any intro is composed, on the same timeline.
 
     # === STEP 7: Intro frame ===
     if ENABLE_INTRO_FRAME:
-        try:
-            intro = create_intro_frame(
-                surah_num=surah,
-                surah_name_ar=surah_name,
-                surah_name_en=surah_name_en,
-                verse_start=start_ayah,
-                verse_end=end_ayah,
-                duration=INTRO_DURATION,
-                style=style,
-            )
-            final_video = concatenate_videoclips(
-                [intro, final_video], method="compose"
-            )
-            total_duration += INTRO_DURATION
-            logger.info(f"Added {INTRO_DURATION}s intro frame")
-        except Exception as e:
-            logger.warning(f"Could not add intro frame, skipping: {e}")
+        intro = create_intro_frame(
+            surah_num=surah, surah_name_ar=surah_name, surah_name_en=surah_name_en,
+            verse_start=start_ayah, verse_end=end_ayah, duration=INTRO_DURATION, style=style,
+        )
+        final_video = concatenate_videoclips([intro, final_video], method="compose")
+        resources.extend([intro, final_video])
+        combined_audio = CompositeAudioClip([combined_audio.set_start(INTRO_DURATION)])
+        resources.append(combined_audio)
+        total_duration += INTRO_DURATION
+        logger.info(f"Added {INTRO_DURATION}s intro frame")
+    combined_audio = combined_audio.set_duration(total_duration)
+    final_video = final_video.set_audio(combined_audio)
+    resources.append(final_video)
 
     # === STEP 8: Export ===
     if output_path is None:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         verse_range = (
             f"{start_ayah}" if start_ayah == end_ayah
             else f"{start_ayah}-{end_ayah}"
@@ -466,23 +498,28 @@ def generate_reel(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Exporting video to {output_path}")
-    final_video.write_videofile(
-        str(output_path),
-        fps=VIDEO_FPS,
-        codec=VIDEO_CODEC,
-        audio=str(temp_audio_path),
-        audio_codec=AUDIO_CODEC,
-        audio_bitrate=AUDIO_BITRATE,
-        verbose=False,
-        logger=None,
-        ffmpeg_params=["-movflags", "+faststart"],
-    )
-
-    # Cleanup
-    final_video.close()
-    if temp_audio_path.exists():
-        temp_audio_path.unlink()
-    cleanup_audio_files(AUDIO_DIR)
+    with exclusive_lock(Path(str(output_path) + ".lock")):
+        if output_path.exists():
+            raise FileExistsError(f"Refusing to overwrite an existing reel: {output_path.name}")
+        final_video.write_videofile(
+            str(output_path), fps=VIDEO_FPS, codec=VIDEO_CODEC, audio=True,
+            temp_audiofile=str(audio_dir / "combined.m4a"), audio_codec=AUDIO_CODEC,
+            audio_bitrate=AUDIO_BITRATE, verbose=False, logger=None,
+            ffmpeg_params=["-movflags", "+faststart"],
+        )
+        streams = verify_media_streams(output_path, total_duration, style.video_width, style.video_height)
+        write_media_manifest(output_path, {
+            "format": "shorts", "reciter_key": reciter_key,
+            "coverage": [{"surah": surah, "start_ayah": start_ayah, "end_ayah": end_ayah}],
+            "verses": [{"surah": surah, "ayah": item["ayah"], "reciter_key": reciter_key,
+                        "text": item["text"], "recording_url": item["recording_url"],
+                        "source": item["audio_source"], "audio_sha256": file_sha256(item["audio_path"]),
+                        "text_source": item["text_source"], "timing_source": item["timing_source"],
+                        "audio_duration": item["audio_duration"]} for item in ayah_data],
+            "loop_count": 1, "intro_duration": INTRO_DURATION if ENABLE_INTRO_FRAME else 0,
+            "duration_seconds": total_duration, "streams": streams,
+            "background": get_asset_provenance(background_path), "domain_review_required": True,
+        })
 
     logger.success(f"Reel generated successfully: {output_path}")
     return output_path, start_ayah, end_ayah

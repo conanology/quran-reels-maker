@@ -68,10 +68,11 @@ def generate_metadata(
     from core.ai_brain import generate_video_metadata
     
     translations = []
-    for a in range(start_ayah, end_ayah + 1):
-        t = get_ayah_translation(surah, a)
-        if t:
-            translations.append(t)
+    if os.getenv("ENABLE_AI_METADATA", "false").lower() == "true":
+        for a in range(start_ayah, end_ayah + 1):
+            t = get_ayah_translation(surah, a)
+            if t:
+                translations.append(t)
     translation_text = " ".join(translations).strip()
     
     ai_metadata = None
@@ -85,7 +86,7 @@ def generate_metadata(
                 translation=translation_text
             )
         except Exception as e:
-            logger.error(f"Error during AI metadata generation: {e}")
+            logger.error(f"Error during AI metadata generation: {type(e).__name__}")
             
     if ai_metadata and ai_metadata.get("title") and ai_metadata.get("description"):
         title = ai_metadata["title"]
@@ -173,7 +174,9 @@ def upload_video(
     video_path: Path,
     metadata: Dict[str, Any],
     privacy_status: str = YOUTUBE_PRIVACY_STATUS,
-    notify_subscribers: bool = True
+    notify_subscribers: bool = True,
+    *, automatic: bool = False, job_id=None, expected_channel_id=None,
+    approval=None, receipt_callback=None, processing_timeout: float = 120, thumbnail_path=None
 ) -> Dict[str, Any]:
     """
     Upload a video to YouTube.
@@ -194,12 +197,44 @@ def upload_video(
     
     if not video_path.exists():
         raise YouTubeUploadError(f"Video file not found: {video_path}")
+    if privacy_status not in ('public','private','unlisted'):
+        raise YouTubeUploadError('Invalid privacy status')
+    if automatic:
+        from notifications.publishing_policy import package_digest
+        expected_channel_id = expected_channel_id or os.getenv('YOUTUBE_EXPECTED_CHANNEL_ID','')
+        if not expected_channel_id or not job_id or not approval:
+            raise YouTubeUploadError('Automatic upload requires expected identity, job and final approval')
+        digest,_ = package_digest(video_path,metadata,platform='youtube',privacy_status=privacy_status,
+                                  expected_account=expected_channel_id,thumbnail_path=thumbnail_path)
+        if approval.get('job_id') != job_id or approval.get('package_hash') != digest:
+            raise YouTubeUploadError('Approval does not match final package')
+        actual_thumbnail=str(Path(thumbnail_path).resolve()) if thumbnail_path else None
+        if approval.get('thumbnail_path') != actual_thumbnail:
+            raise YouTubeUploadError('Thumbnail differs from reviewed package')
+    if job_id:
+        from database.jobs import read_upload_receipts, record_upload_receipt, assert_transfer_retry_safe, begin_upload_attempt
+        receipts = read_upload_receipts(job_id)
+        previous = receipts.get('youtube')
+        if previous:
+            # A durable remote identifier forbids a second insertion. Resume only
+            # reconciles the existing transfer even after a failed DB commit.
+            if previous.get('status') in ('published','processed'):
+                return previous
+            service=get_authenticated_service()
+            return _wait_for_processing(service,previous,privacy_status,expected_channel_id,
+                                        processing_timeout,lambda r:record_upload_receipt(job_id,'youtube',r))
+        assert_transfer_retry_safe(job_id,'youtube')
     
     # Get authenticated service
     try:
         service = get_authenticated_service()
     except YouTubeAuthError as e:
         raise YouTubeUploadError(f"Authentication failed: {e}") from e
+    if expected_channel_id:
+        identity=service.channels().list(part='id',mine=True).execute()
+        ids=[item.get('id') for item in identity.get('items',[])]
+        if ids != [expected_channel_id]:
+            raise YouTubeUploadError('Authenticated YouTube channel does not match intended identity')
     
     # Prepare video metadata
     body = {
@@ -217,8 +252,6 @@ def upload_video(
     }
     
     # If not notifying subscribers (for test uploads)
-    if not notify_subscribers:
-        body['status']['notifySubscribers'] = False
     
     logger.info(f"Uploading video: {metadata['title']}")
     logger.debug(f"File: {video_path}")
@@ -232,6 +265,8 @@ def upload_video(
     )
     
     # Create upload request
+    if job_id:
+        begin_upload_attempt(job_id,'youtube')
     request = service.videos().insert(
         part=','.join(body.keys()),
         body=body,
@@ -244,21 +279,58 @@ def upload_video(
     
     if response:
         video_id = response['id']
-        video_url = f"https://youtube.com/shorts/{video_id}"
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
         
         logger.success(f"✅ Video uploaded successfully!")
         logger.success(f"   Video ID: {video_id}")
         logger.success(f"   URL: {video_url}")
         
-        return {
+        receipt = {
             'success': True,
             'video_id': video_id,
             'url': video_url,
             'title': metadata['title'],
-            'privacy_status': privacy_status
+            'privacy_status': privacy_status,
+            'status': 'transferred'
         }
+        def save_receipt(value):
+            if job_id:
+                record_upload_receipt(job_id,'youtube',value)
+            if receipt_callback:
+                receipt_callback(value)
+        save_receipt(receipt)
+        return _wait_for_processing(service,receipt,privacy_status,expected_channel_id,
+                                    processing_timeout,save_receipt)
     
     raise YouTubeUploadError("Upload returned no response")
+
+
+def _wait_for_processing(service, receipt, intended_privacy, expected_channel_id, timeout, save):
+    deadline=time.monotonic()+timeout
+    while time.monotonic() < deadline:
+        result=service.videos().list(part='status,processingDetails,snippet',id=receipt['video_id']).execute()
+        items=result.get('items',[])
+        if items:
+            item=items[0]
+            status=item.get('status',{})
+            processing=item.get('processingDetails',{}).get('processingStatus')
+            if expected_channel_id and item.get('snippet',{}).get('channelId') != expected_channel_id:
+                raise YouTubeUploadError('Uploaded video belongs to an unexpected channel')
+            if status.get('privacyStatus') != intended_privacy:
+                raise YouTubeUploadError('Server visibility differs from intended privacy')
+            if processing == 'failed' or status.get('uploadStatus') in ('failed','rejected','deleted'):
+                failed=dict(receipt,status='failed',success=False)
+                save(failed)
+                raise YouTubeUploadError('YouTube processing failed; existing receipt retained')
+            if processing == 'succeeded' and status.get('uploadStatus') == 'processed':
+                final=dict(receipt,status='published' if intended_privacy=='public' else 'processed',
+                           privacy_status=status['privacyStatus'],success=True)
+                save(final)
+                return final
+        time.sleep(min(3,max(0,deadline-time.monotonic())))
+    pending=dict(receipt,status='processing',success=False)
+    save(pending)
+    raise YouTubeUploadError('YouTube processing deadline elapsed; reconcile receipt before retry')
 
 
 def _execute_with_retry(request) -> Optional[Dict]:
@@ -285,14 +357,14 @@ def _execute_with_retry(request) -> Optional[Dict]:
                 
         except HttpError as e:
             if e.resp.status in RETRIABLE_STATUS_CODES:
-                error_msg = f"Retriable HTTP error {e.resp.status}: {e.content}"
+                error_msg = f"Retriable HTTP error {e.resp.status}"
             else:
-                raise YouTubeUploadError(f"HTTP error: {e.resp.status} - {e.content}")
+                raise YouTubeUploadError(f"HTTP error: {e.resp.status}")
             
             retry = _handle_retry(retry, error_msg)
             
         except RETRIABLE_EXCEPTIONS as e:
-            retry = _handle_retry(retry, str(e))
+            retry = _handle_retry(retry, type(e).__name__)
     
     return response
 
@@ -412,7 +484,7 @@ def check_video_status(video_id: str) -> Dict[str, Any]:
         return {'found': False, 'id': video_id}
         
     except Exception as e:
-        logger.error(f"Failed to check video status: {e}")
+        logger.error(f"Failed to check video status: {type(e).__name__}")
         return {'found': False, 'id': video_id, 'error': str(e)}
 
 
@@ -431,7 +503,8 @@ def thumbnail_mimetype(thumbnail_path: Path) -> Optional[str]:
     }.get(thumbnail_path.suffix.lower())
 
 
-def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, Any]]:
+def upload_thumbnail(video_id: str, thumbnail_path: Path, *, automatic=False, approval=None,
+                     expected_channel_id=None) -> Optional[Dict[str, Any]]:
     """
     Upload a custom thumbnail for a YouTube video.
     
@@ -443,6 +516,17 @@ def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, 
         API response dictionary if successful, None otherwise
     """
     thumbnail_path = Path(thumbnail_path)
+    if automatic:
+        from notifications.publishing_policy import thumbnail_digest
+        from database.jobs import read_upload_receipts
+        if not approval or approval.get('thumbnail_path')!=str(thumbnail_path.resolve()) or approval.get('thumbnail_sha256')!=thumbnail_digest(thumbnail_path):
+            raise YouTubeUploadError('Thumbnail differs from approved final package')
+        receipt=read_upload_receipts(approval['job_id']).get('youtube',{})
+        if receipt.get('video_id')!=video_id:
+            raise YouTubeUploadError('Thumbnail target differs from approved job receipt')
+        expected_channel_id=expected_channel_id or approval.get('expected_account')
+        if not expected_channel_id:
+            raise YouTubeUploadError('Thumbnail requires intended channel identity')
     if not thumbnail_path.exists():
         logger.error(f"Thumbnail file not found: {thumbnail_path}")
         return None
@@ -457,6 +541,13 @@ def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, 
 
     try:
         service = get_authenticated_service()
+        if expected_channel_id:
+            identity=service.channels().list(part='id',mine=True).execute()
+            if [item.get('id') for item in identity.get('items',[])] != [expected_channel_id]:
+                raise YouTubeUploadError('Thumbnail channel identity mismatch')
+            target=service.videos().list(part='snippet',id=video_id).execute().get('items',[])
+            if len(target)!=1 or target[0].get('snippet',{}).get('channelId')!=expected_channel_id:
+                raise YouTubeUploadError('Thumbnail target channel identity mismatch')
         logger.info(f"Uploading custom thumbnail for video {video_id} from {thumbnail_path.name}...")
 
         media = MediaFileUpload(
@@ -474,6 +565,6 @@ def upload_thumbnail(video_id: str, thumbnail_path: Path) -> Optional[Dict[str, 
         return response
         
     except Exception as e:
-        logger.error(f"Failed to upload custom thumbnail for video {video_id}: {e}")
+        logger.error(f"Failed to upload custom thumbnail for video {video_id}: {type(e).__name__}")
         return None
 

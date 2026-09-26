@@ -1,12 +1,17 @@
 """
 Background Renderer - Cinematic 16:9 B-roll backgrounds for long-form videos.
-Downloads landscape-oriented nature footage from Pexels with usage tracking
-to ensure no video is ever repeated.
+Downloads landscape-oriented footage with provenance and preference for unused
+assets; an exhausted search may reuse reviewed cached footage.
 """
 import os
 import json
 import random
 import requests
+import tempfile
+import subprocess
+import uuid
+import hashlib
+from PIL import Image
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -14,6 +19,8 @@ from loguru import logger
 
 from config.settings import OUTPUTS_DIR
 from core.person_detector import has_people
+from core.runtime_safety import atomic_write_json, exclusive_lock
+from core.asset_provenance import download_background_asset, get_asset_provenance
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -22,7 +29,6 @@ from core.person_detector import has_people
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
 BACKGROUNDS_DIR = OUTPUTS_DIR / "longform" / "backgrounds"
-BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
 
 BACKGROUND_USAGE_FILE = OUTPUTS_DIR / "longform" / "background_usage.json"
 
@@ -50,8 +56,10 @@ def _load_usage_history() -> List[int]:
     if BACKGROUND_USAGE_FILE.exists():
         try:
             data = json.loads(BACKGROUND_USAGE_FILE.read_text(encoding="utf-8"))
-            return data.get("used_ids", [])
-        except (json.JSONDecodeError, KeyError):
+            if not isinstance(data, dict) or not isinstance(data.get("used_ids", []), list):
+                raise ValueError("Invalid background usage history")
+            return [value for value in data.get("used_ids", []) if isinstance(value, int) and not isinstance(value, bool)]
+        except (OSError, ValueError, KeyError):
             logger.warning("Corrupted background usage file — starting fresh")
     return []
 
@@ -59,10 +67,9 @@ def _load_usage_history() -> List[int]:
 def _save_usage_history(used_ids: List[int]) -> None:
     """Persist the list of used Pexels video IDs."""
     BACKGROUND_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BACKGROUND_USAGE_FILE.write_text(
-        json.dumps({"used_ids": used_ids}, indent=2),
-        encoding="utf-8",
-    )
+    with exclusive_lock(Path(str(BACKGROUND_USAGE_FILE) + ".lock")):
+        existing = _load_usage_history()
+        atomic_write_json(BACKGROUND_USAGE_FILE, {"used_ids": sorted(set(existing + used_ids))})
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +140,7 @@ def _download_pexels_video(video_data: Dict, target_file: Dict) -> Optional[Path
     height = target_file.get("height", 0)
     filename = f"pexels_{video_data['id']}_{height}p.mp4"
     output_path = BACKGROUNDS_DIR / filename
-
-    if output_path.exists():
-        return output_path
+    BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
 
     logger.info(
         f"Downloading Pexels landscape video: {video_data['id']} "
@@ -143,16 +148,11 @@ def _download_pexels_video(video_data: Dict, target_file: Dict) -> Optional[Path
     )
 
     try:
-        with requests.get(download_url, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            with open(output_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        return output_path
+        return download_background_asset(output_path, download_url, {"provider": "Pexels",
+            "video_id": video_data["id"], "source_url": video_data.get("url"),
+            "creator": video_data.get("user", {}).get("name")})
     except Exception as e:
         logger.error(f"Failed to download Pexels video {video_data['id']}: {e}")
-        # Clean up partial file
-        output_path.unlink(missing_ok=True)
         return None
 
 
@@ -184,6 +184,7 @@ def get_cinematic_background(min_duration: int = 30) -> Optional[Path]:
         Path to the downloaded/cached background video, or None.
     """
     used_ids = _load_usage_history()
+    BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Try up to 3 different queries
     tried_queries: set[str] = set()
@@ -214,7 +215,8 @@ def get_cinematic_background(min_duration: int = 30) -> Optional[Path]:
                 continue
 
             if _video_has_people(path):
-                path.unlink(missing_ok=True)
+                # Shared cached assets may be open in another job; rejection is
+                # not authorization to delete another job's input.
                 continue
 
             # Success — record usage and return
@@ -255,6 +257,10 @@ def get_ai_landscape_background(
     from core.quran_api import get_ayah_translation
     from core.ai_brain import generate_visual_prompt
 
+    if os.getenv("ENABLE_AI_BACKGROUNDS", os.getenv("ALLOW_AI_BACKGROUNDS", "false")).lower() != "true":
+        return None
+    BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
+
     # 1. Determine visual prompt
     if custom_prompt:
         visual_prompt = custom_prompt
@@ -280,22 +286,40 @@ def get_ai_landscape_background(
     encoded_prompt = urllib.parse.quote(visual_prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&model=flux&nologo=true"
     
-    temp_jpg = BACKGROUNDS_DIR / f"temp_ai_bg_{int(time.time())}.jpg"
+    request_id = uuid.uuid4().hex
+    temp_jpg = BACKGROUNDS_DIR / f"temp_ai_bg_{request_id}.jpg"
+    partial_jpg = temp_jpg.with_suffix(".part")
     try:
         logger.info(f"Downloading themed AI landscape background from Pollinations: {temp_jpg.name}")
-        response = requests.get(url, timeout=60)
-        if response.status_code == 200:
-            with open(temp_jpg, "wb") as f:
-                f.write(response.content)
-        else:
-            logger.error(f"Pollinations landscape API error: {response.status_code}")
-            return None
+        deadline = time.monotonic() + 120
+        with requests.get(url, stream=True, timeout=(10, 30)) as response, partial_jpg.open("wb") as destination:
+            response.raise_for_status()
+            size = 0
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > 12 * 1024 * 1024 or time.monotonic() > deadline:
+                    raise ValueError("AI landscape image exceeded download size/time bound")
+                destination.write(chunk)
+            destination.flush()
+            os.fsync(destination.fileno())
+        with Image.open(partial_jpg) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > 30_000_000 or image.format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError("Generated landscape background has invalid dimensions/format")
+            image.verify()
+        os.replace(partial_jpg, temp_jpg)
+        atomic_write_json(Path(str(temp_jpg) + ".source.json"), {"provider": "Pollinations", "generated": True,
+            "prompt_sha256": hashlib.sha256(visual_prompt.encode("utf-8")).hexdigest(),
+            "requested_model": "flux", "width": width, "height": height,
+            "license_review_required": True, "content_review_required": True})
     except Exception as e:
         logger.error(f"Failed to download AI landscape image: {e}")
+        partial_jpg.unlink(missing_ok=True)
+        temp_jpg.unlink(missing_ok=True)
         return None
 
     # 4. Convert image to 60-second zoom-in MP4 video using FFmpeg
-    output_mp4 = BACKGROUNDS_DIR / f"ai_landscape_bg_{int(time.time())}.mp4"
+    output_mp4 = BACKGROUNDS_DIR / f"ai_landscape_bg_{request_id}.mp4"
     logger.info(f"Converting static image to 60-second video clip using FFmpeg: {output_mp4.name}")
     
     cmd = [
@@ -310,7 +334,10 @@ def get_ai_landscape_background(
     ]
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+        atomic_write_json(Path(str(output_mp4) + ".source.json"), {"provider": "Pollinations", "generated": True,
+            "source_image": temp_jpg.name, "prompt_sha256": hashlib.sha256(visual_prompt.encode("utf-8")).hexdigest(),
+            "license_review_required": True, "content_review_required": True})
         logger.success(f"Generated landscape background video from AI image: {output_mp4.name}")
         return output_mp4, temp_jpg
     except Exception as e:

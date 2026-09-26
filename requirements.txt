@@ -40,11 +40,12 @@ loguru>=0.7.0,<1
 apscheduler>=3.10.0,<4
 
 # Timezone handling
-pytz>=2023.3
+pytz>=2023.3,<2027
 
 # Testing
 pytest>=7.0.0,<10
 pytest-mock>=3.10.0,<4
+PyYAML>=6.0,<7  # workflow structure/security regression checks
 
 # TikTok Upload (optional)
 tiktok-uploader>=0.1.0,<2

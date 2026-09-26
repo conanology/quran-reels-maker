@@ -3,7 +3,6 @@ YouTube Authentication - OAuth2 flow for YouTube Data API v3
 """
 import os
 import json
-import pickle
 from pathlib import Path
 from typing import Optional
 from loguru import logger
@@ -27,7 +26,7 @@ class YouTubeAuthError(Exception):
     pass
 
 
-def get_credentials() -> Optional[Credentials]:
+def get_credentials(*, refresh=True) -> Optional[Credentials]:
     """
     Get valid OAuth2 credentials, refreshing if necessary.
     
@@ -43,37 +42,23 @@ def get_credentials() -> Optional[Credentials]:
         try:
             with open(json_token_path, 'r') as f:
                 token_data = json.load(f)
-            creds = Credentials(
-                token=token_data.get('token'),
-                refresh_token=token_data.get('refresh_token'),
-                token_uri=token_data.get('token_uri'),
-                client_id=token_data.get('client_id'),
-                client_secret=token_data.get('client_secret'),
-                scopes=token_data.get('scopes')
-            )
+            if not token_data.get('expiry'):
+                # Older serialization discarded expiry; force a refresh instead
+                # of treating this access token as permanently valid.
+                token_data['expiry'] = '1970-01-01T00:00:00Z'
+            creds = Credentials.from_authorized_user_info(token_data)
             logger.debug("Loaded credentials from JSON token file")
         except Exception as e:
-            logger.warning(f"Failed to load JSON token file: {e}")
+            logger.warning(f"Failed to load JSON token file: {type(e).__name__}")
             creds = None
     
-    # Fall back to pickle (legacy format) and migrate
-    elif token_path.exists():
-        try:
-            with open(token_path, 'rb') as token_file:
-                creds = pickle.load(token_file)
-            logger.info("Loaded credentials from legacy pickle file, migrating to JSON...")
-            # Migrate to JSON format
-            save_credentials(creds)
-            # Optionally rename old pickle file
-            backup_path = token_path.with_suffix('.pickle.bak')
-            token_path.rename(backup_path)
-            logger.info(f"Migrated to JSON format. Old file backed up to {backup_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load pickle token file: {e}")
-            creds = None
-    
+    # Legacy pickle is intentionally never deserialized in a publishing process.
+    # Reauthorize explicitly with setup-youtube to replace that unsafe format.
+
     # Check if credentials are valid
     if creds and creds.valid:
+        return creds
+    if creds and not refresh:
         return creds
     
     # Try to refresh expired credentials
@@ -84,7 +69,7 @@ def get_credentials() -> Optional[Credentials]:
             save_credentials(creds)
             return creds
         except Exception as e:
-            logger.warning(f"Failed to refresh credentials: {e}")
+            logger.warning(f"Failed to refresh credentials: {type(e).__name__}")
             creds = None
     
     return None
@@ -102,17 +87,9 @@ def save_credentials(creds: Credentials) -> None:
     json_token_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Serialize credentials to JSON (more secure than pickle)
-    token_data = {
-        'token': creds.token,
-        'refresh_token': creds.refresh_token,
-        'token_uri': creds.token_uri,
-        'client_id': creds.client_id,
-        'client_secret': creds.client_secret,
-        'scopes': list(creds.scopes) if creds.scopes else None
-    }
-    
-    with open(json_token_path, 'w') as f:
-        json.dump(token_data, f, indent=2)
+    from core.runtime_safety import atomic_write_json
+    token_data = json.loads(creds.to_json())
+    atomic_write_json(json_token_path, token_data, private=True)
     
     logger.debug(f"Saved credentials to {json_token_path}")
 
@@ -160,11 +137,11 @@ def authenticate_interactive() -> Credentials:
         return creds
         
     except Exception as e:
-        logger.error(f"Authentication failed: {e}")
-        raise YouTubeAuthError(f"OAuth2 authentication failed: {e}") from e
+        logger.error(f"Authentication failed: {type(e).__name__}")
+        raise YouTubeAuthError(f"OAuth2 authentication failed: {type(e).__name__}") from e
 
 
-def get_authenticated_service() -> Resource:
+def get_authenticated_service(*, interactive: bool = False) -> Resource:
     """
     Get an authenticated YouTube API service.
     Will use existing credentials or prompt for authentication.
@@ -178,8 +155,8 @@ def get_authenticated_service() -> Resource:
     creds = get_credentials()
     
     if creds is None:
-        # Need to authenticate
-        logger.info("No valid credentials found. Starting authentication...")
+        if not interactive:
+            raise YouTubeAuthError('No usable credentials; run setup-youtube explicitly')
         creds = authenticate_interactive()
     
     try:
@@ -188,8 +165,8 @@ def get_authenticated_service() -> Resource:
         return service
         
     except Exception as e:
-        logger.error(f"Failed to create YouTube service: {e}")
-        raise YouTubeAuthError(f"Failed to create YouTube service: {e}") from e
+        logger.error(f"Failed to create YouTube service: {type(e).__name__}")
+        raise YouTubeAuthError(f"Failed to create YouTube service: {type(e).__name__}") from e
 
 
 def check_authentication_status() -> dict:
@@ -199,9 +176,9 @@ def check_authentication_status() -> dict:
     Returns:
         Dict with authentication status info
     """
-    creds = get_credentials()
+    creds = get_credentials(refresh=False)
     client_secrets_exists = Path(YOUTUBE_CLIENT_SECRETS).exists()
-    token_exists = Path(YOUTUBE_TOKEN_PATH).exists()
+    token_exists = Path(YOUTUBE_TOKEN_PATH).with_suffix('.json').exists()
     
     if creds is None:
         status = "not_authenticated"
@@ -234,12 +211,13 @@ def revoke_credentials() -> bool:
     token_path = Path(YOUTUBE_TOKEN_PATH)
     
     try:
-        if token_path.exists():
-            token_path.unlink()
-            logger.info("Credentials revoked and token file deleted")
+        for candidate in (token_path, token_path.with_suffix('.json'), token_path.with_suffix('.pickle.bak')):
+            if candidate.exists():
+                candidate.unlink()
+        logger.info("Local credentials disconnected; remote authorization is unchanged")
         return True
     except Exception as e:
-        logger.error(f"Failed to revoke credentials: {e}")
+        logger.error(f"Failed to revoke credentials: {type(e).__name__}")
         return False
 
 
@@ -268,5 +246,5 @@ def test_authentication() -> bool:
         return False
         
     except Exception as e:
-        logger.error(f"Authentication test failed: {e}")
+        logger.error(f"Authentication test failed: {type(e).__name__}")
         return False

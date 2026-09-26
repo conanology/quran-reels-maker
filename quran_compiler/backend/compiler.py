@@ -1,237 +1,133 @@
-import os
-import subprocess
+"""Bounded local FFmpeg compiler with job-owned files and preserved recitation audio."""
+from __future__ import annotations
 import json
-import shutil
+import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from .common import (DATA_DIR, FONT_PATH, MAX_CLIPS, MAX_CLIP_SECONDS, MAX_JOB_SECONDS,
+                     MAX_OUTPUT_BYTES, check_cancel, contained, output_name, video_id,
+                     transition, atomic_json, run_process)
 
-# Folder setup
-BASE_DIR = r"C:\Users\acona\.gemini\antigravity\scratch\quran_compiler"
-TEMP_DIR = os.path.join(BASE_DIR, "data", "temp")
-OUTPUT_DIR = os.path.join(BASE_DIR, "data", "output")
-FONTS_DIR = os.path.join(BASE_DIR, "backend", "assets", "fonts")
-FONT_PATH = os.path.join(FONTS_DIR, "Amiri-Regular.ttf")
 
-os.makedirs(TEMP_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-def get_video_duration(video_path):
-    """
-    Retrieves the duration of a video file using ffprobe.
-    """
-    cmd = [
-        "ffprobe", "-v", "error", 
-        "-show_entries", "format=duration", 
-        "-of", "default=noprint_wrappers=1:nokey=1", 
-        video_path
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-        return float(result.stdout.strip())
-    except Exception as e:
-        print(f"Error getting duration for {video_path}: {e}")
-        return 0.0
-
-def format_timestamp(seconds):
-    """
-    Formats seconds into MM:SS or HH:MM:SS.
-    """
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    else:
-        return f"{m:02d}:{s:02d}"
-
-def process_single_clip(input_path, output_path, reciter_name, transition_duration=1.5):
-    """
-    Processes a single 9:16 video:
-    - Creates a 16:9 1920x1080 canvas.
-    - Scales and blurs the background.
-    - Scales and overlays the original video in the center.
-    - Adds Arabic reciter text overlay in the bottom third.
-    - Applies fade-in and fade-out to video and audio.
-    - Standardizes format to 30fps, 44100Hz stereo audio.
-    """
-    duration = get_video_duration(input_path)
-    if duration == 0:
-        raise ValueError(f"Could not retrieve duration for {input_path}")
-    
-    # Write reciter name to a temporary UTF-8 text file to avoid encoding issues with FFmpeg CLI arguments
-    text_file_path = output_path + ".txt"
-    with open(text_file_path, "w", encoding="utf-8") as f:
-        f.write(reciter_name)
-    
-    # Convert absolute paths to relative paths or format properly for FFmpeg drawtext on Windows.
-    # To bypass escaping bugs, we copy the text file to the current execution directory or escape properly.
-    # In FFmpeg drawtext on Windows, we escape the path colons, e.g. "C\:/path/to/file.txt".
-    # Or, we can just use relative path since we run it in a specific working directory.
-    # Let's write the text file in the same directory as the script, and pass relative paths.
-    rel_font_path = "backend/assets/fonts/Amiri-Regular.ttf"
-    # Fallback to local copy if run from scratch
-    if not os.path.exists(FONT_PATH):
-        # If font doesn't exist, we will use default Arial/system font (but Amiri is downloaded during setup)
-        font_filter = "fontcolor=white:fontsize=54"
-    else:
-        # Escape colons and backslashes in absolute path for FFmpeg filter on Windows
-        escaped_font_path = FONT_PATH.replace("\\", "/").replace(":", "\\:")
-        escaped_text_path = text_file_path.replace("\\", "/").replace(":", "\\:")
-        font_filter = f"fontfile='{escaped_font_path}':textfile='{escaped_text_path}'"
-
-    fade_in_start = 0
-    fade_out_start = max(0.0, duration - transition_duration)
-    
-    # Build filter complex
-    # 1. Background: Scale to 1920 width, crop center 1920x1080, apply boxblur (40px, power 3)
-    # 2. Foreground: Scale height to 1080, width proportionally, and center overlay
-    # 3. Text: Overlay reciter name
-    # 4. Fades: Apply fade-in and fade-out on both video and audio
-    filter_complex = (
-        f"[0:v]scale=1920:-1,crop=1920:1080:(in_w-1920)/2:(in_h-1080)/2,boxblur=40:5[bg]; "
-        f"[0:v]scale=-2:1080[fg]; "
-        f"[bg][fg]overlay=(W-w)/2:0[ov]; "
-        f"[ov]drawtext={font_filter}:fontcolor=white:fontsize=50:borderw=3:bordercolor=black@0.8:x=(w-text_w)/2:y=h-160,"
-        f"fade=t=in:st={fade_in_start}:d={transition_duration},"
-        f"fade=t=out:st={fade_out_start}:d={transition_duration}[v]; "
-        f"[0:a]afade=t=in:st={fade_in_start}:d={transition_duration},"
-        f"afade=t=out:st={fade_out_start}:d={transition_duration}[a]"
-    )
-
-    cmd = [
-        "ffmpeg", "-y", "-i", input_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-c:a", "aac",
-        "-pix_fmt", "yuv420p",
-        "-r", "30", "-ar", "44100", "-ac", "2",
-        output_path
-    ]
-    
-    print(f"Executing FFmpeg for {input_path}...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    # Clean up the text file
-    if os.path.exists(text_file_path):
-        try:
-            os.remove(text_file_path)
-        except Exception:
-            pass
-
-    if result.returncode != 0:
-        print(f"FFmpeg Error output:\n{result.stderr}")
-        raise RuntimeError(f"FFmpeg failed with exit code {result.returncode}")
-        
+def probe_media(path, *, cancel=None, require_audio=True):
+    path = Path(path)
+    if not path.is_file() or not 0 < path.stat().st_size <= MAX_OUTPUT_BYTES:
+        raise ValueError("Media is missing, empty or exceeds the size limit.")
+    data = json.loads(run_process(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height", "-of", "json", str(path)], timeout=20, cancel=cancel, max_stdout=65536))
+    duration = float(data.get("format", {}).get("duration", 0))
+    streams = data.get("streams", [])
+    visual = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if not math.isfinite(duration) or duration <= 0 or not visual or visual.get("width", 0) < 1 or visual.get("height", 0) < 1:
+        raise ValueError("Media has no valid video stream or duration.")
+    if require_audio and not any(s.get("codec_type") == "audio" for s in streams):
+        raise ValueError("Selected clip has no recitation audio stream.")
     return duration
 
-def compile_longform(clips, output_filename="final_compilation.mp4", transition_duration=1.5, progress_callback=None):
-    """
-    Compiles a list of clips into a single long-form video.
-    clips is a list of dicts: [{'video_id': '...', 'reciter_name': '...', 'surah_name': '...'}]
-    
-    Returns a dict containing output path and chapter list metadata.
-    """
-    # Clean temp folder
-    shutil.rmtree(TEMP_DIR, ignore_errors=True)
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    
-    processed_paths = []
-    chapters = []
-    accumulated_time = 0.0
-    
-    total_clips = len(clips)
-    
-    for idx, clip in enumerate(clips):
-        video_id = clip['video_id']
-        reciter_name = clip['reciter_name']
-        surah_name = clip['surah_name']
-        
-        raw_path = os.path.join(BASE_DIR, "data", "downloads", f"{video_id}.mp4")
-        if not os.path.exists(raw_path):
-            raise FileNotFoundError(f"Raw video file not found: {raw_path}")
-            
-        temp_out_path = os.path.join(TEMP_DIR, f"processed_{idx:03d}.mp4")
-        
-        if progress_callback:
-            progress_callback(idx, total_clips, f"Processing clip {idx+1}/{total_clips} ({surah_name})...")
-            
-        # Process individual clip with blur, overlays, and fades
-        duration = process_single_clip(raw_path, temp_out_path, reciter_name, transition_duration)
-        
-        processed_paths.append(temp_out_path)
-        
-        # Chapter title front-loads reciter name and surah name
-        chapter_title = f"{surah_name} - {reciter_name}"
-        chapters.append({
-            "timestamp": format_timestamp(accumulated_time),
-            "seconds": accumulated_time,
-            "title": chapter_title
-        })
-        
-        accumulated_time += duration
-        
-    # Concatenate using FFmpeg concat demuxer
-    concat_txt_path = os.path.join(TEMP_DIR, "concat_list.txt")
-    with open(concat_txt_path, "w", encoding="utf-8") as f:
-        for path in processed_paths:
-            # Escape path for FFmpeg concat file (Windows format requires double backslashes or forward slashes)
-            escaped_path = path.replace("\\", "/")
-            f.write(f"file '{escaped_path}'\n")
-            
-    final_output_path = os.path.join(OUTPUT_DIR, output_filename)
-    
-    if progress_callback:
-        progress_callback(total_clips, total_clips, "Concatenating final video...")
-        
-    concat_cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", concat_txt_path, "-c", "copy",
-        final_output_path
-    ]
-    
-    result = subprocess.run(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        print(f"FFmpeg Concat Error:\n{result.stderr}")
-        raise RuntimeError(f"FFmpeg concat failed with exit code {result.returncode}")
-        
-    # Generate metadata description
-    description_lines = [
-        "📖 Beautiful Quran Recitations Compilation",
-        "",
-        "Timestamps / Chapters:",
-    ]
-    for ch in chapters:
-        description_lines.append(f"{ch['timestamp']} - {ch['title']}")
-        
-    description_lines.extend([
-        "",
-        "Category: Education (27)",
-        "Aspect Ratio: 16:9 (1920x1080) optimized for long-form viewing.",
-        "Transitions: 3-second clean black fade handoffs between reciters.",
-        "Backgrounds: Premium blurred vertical frames.",
-        "",
-        "If you enjoyed this recitation, please like, subscribe, and share for more spiritual content."
-    ])
-    
-    metadata = {
-        "output_path": final_output_path,
-        "duration_seconds": accumulated_time,
-        "duration_formatted": format_timestamp(accumulated_time),
-        "chapters": chapters,
-        "description": "\n".join(description_lines),
-        "recommended_title": f"{clips[0]['surah_name']} to {clips[-1]['surah_name']} | Beautiful Quran Recitations Compilation"
-    }
-    
-    # Save metadata as JSON next to the output video
-    meta_path = final_output_path + ".json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
-    # Clean temp folder
-    shutil.rmtree(TEMP_DIR, ignore_errors=True)
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    
-    return metadata
 
-if __name__ == "__main__":
-    # Test run
-    # process_single_clip("input.mp4", "output.mp4", "القارئ ياسر الدوسري")
-    pass
+def get_video_duration(video_path):
+    return probe_media(video_path)
+
+
+def format_timestamp(seconds):
+    seconds = int(seconds)
+    h, rest = divmod(seconds, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _filter_path(path):
+    return str(Path(path).resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+
+def process_single_clip(input_path, output_path, reciter_name, transition_duration=1.5, *, cancel=None):
+    duration = probe_media(input_path, cancel=cancel)
+    if duration > MAX_CLIP_SECONDS:
+        raise ValueError("Clip exceeds the ten-minute limit.")
+    if not FONT_PATH.is_file():
+        raise FileNotFoundError("Bundled Amiri font is missing; restore backend/assets/fonts/Amiri-Regular.ttf.")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    text_path = output_path.with_suffix(".txt")
+    text_path.write_text(reciter_name, encoding="utf-8")
+    fade = min(transition(transition_duration), duration / 2)
+    filters = (
+        "[0:v]split=2[background][foreground];"
+        "[background]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=40:5[bg];"
+        "[foreground]scale=1920:1080:force_original_aspect_ratio=decrease[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2[ov];"
+        f"[ov]drawtext=fontfile='{_filter_path(FONT_PATH)}':textfile='{_filter_path(text_path)}':"
+        "fontcolor=white:fontsize=50:borderw=3:bordercolor=black@0.8:x=(w-text_w)/2:y=h-160"
+    )
+    if fade:
+        filters += f",fade=t=in:st=0:d={fade},fade=t=out:st={duration-fade}:d={fade}"
+    filters += "[v]"
+    try:
+        # Audio is not faded, shortened, sped up or normalized. Visual fades only.
+        run_process(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(input_path), "-filter_complex", filters,
+                     "-map", "[v]", "-map", "0:a:0", "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-filter_complex_threads", "1",
+                     "-c:a", "aac", "-pix_fmt", "yuv420p", "-r", "30", "-ar", "44100", "-ac", "2", "-fs", str(MAX_OUTPUT_BYTES), str(output_path)], cancel=cancel)
+        rendered = probe_media(output_path, cancel=cancel)
+        if abs(rendered-duration) > 0.25:
+            raise ValueError("Rendered duration does not match the complete source clip.")
+        return rendered
+    finally:
+        text_path.unlink(missing_ok=True)
+
+
+def compile_longform(clips, output_filename="final_compilation.mp4", transition_duration=1.5, progress_callback=None, *, job_dir=None, cancel=None):
+    if not 1 <= len(clips) <= MAX_CLIPS:
+        raise ValueError(f"Choose between 1 and {MAX_CLIPS} clips.")
+    name = output_name(output_filename)
+    fade = transition(transition_duration)
+    ids = [video_id(c["video_id"]) for c in clips]
+    if len(set(ids)) != len(ids):
+        raise ValueError("Each source clip may be included only once per compilation.")
+    for clip in clips:
+        if not clip.get("attribution_verified") or not str(clip.get("reciter_name", "")).strip() or not str(clip.get("surah_name", "")).strip():
+            raise ValueError("Verify the reciter and actual Surah/verse coverage of every selected clip.")
+    root = Path(job_dir or DATA_DIR).resolve()
+    output_dir = root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    final_path = contained(output_dir, name)
+    if final_path.exists() or final_path.with_suffix(".mp4.json").exists():
+        raise FileExistsError("This job already has an output; create a new job to retry.")
+    chapters, accumulated = [], 0.0
+    try:
+        with TemporaryDirectory(prefix="compile-", dir=root) as temp_name:
+            temp = Path(temp_name)
+            processed = []
+            for idx, clip in enumerate(clips):
+                check_cancel(cancel)
+                raw = contained(root / "downloads", f"{ids[idx]}.mp4")
+                if progress_callback:
+                    progress_callback(idx, len(clips)+1, f"Processing clip {idx+1}/{len(clips)}")
+                rendered = temp / f"processed_{idx:03d}.mp4"
+                duration = process_single_clip(raw, rendered, clip["reciter_name"], fade, cancel=cancel)
+                accumulated += duration
+                if accumulated > MAX_JOB_SECONDS:
+                    raise ValueError("Compilation exceeds the one-hour limit.")
+                chapters.append({"timestamp": format_timestamp(accumulated-duration), "seconds": accumulated-duration,
+                                 "title": f"{clip['surah_name']} — {clip['reciter_name']}",
+                                 "source": f"https://www.youtube.com/watch?v={ids[idx]}", "attribution_verified": True})
+                processed.append(rendered)
+                if sum(p.stat().st_size for p in processed) > MAX_OUTPUT_BYTES:
+                    raise ValueError("Processed clips exceed the 2 GB work-space budget.")
+            manifest = temp / "concat.txt"
+            # Generated filenames only, and a relative concat list avoids path quoting.
+            manifest.write_text("".join(f"file '{p.name}'\n" for p in processed), encoding="utf-8")
+            if progress_callback:
+                progress_callback(len(clips), len(clips)+1, "Joining and validating complete output")
+            run_process(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "concat", "-safe", "1", "-i", str(manifest), "-c", "copy", "-fs", str(MAX_OUTPUT_BYTES), str(final_path)], cancel=cancel)
+            actual = probe_media(final_path, cancel=cancel)
+            if abs(actual-accumulated) > max(0.3, len(clips)*0.1):
+                raise ValueError("Final duration differs from included source coverage.")
+            description = "Quran recitation clips — reviewed source labels\n\n" + "\n".join(f"{c['timestamp']} — {c['title']}" for c in chapters)
+            description += f"\n\nVisual fades up to {fade:g} seconds; recitation audio retained without fades.\nSource clips and their selected coverage are listed above; this compilation does not claim full-Surah coverage."
+            result = {"output_filename": name, "duration_seconds": actual, "duration_formatted": format_timestamp(actual), "chapters": chapters,
+                      "description": description, "recommended_title": "Quran Recitation Clips | Reviewed Compilation", "coverage": "selected clips", "audio_preserved": True}
+            atomic_json(final_path.with_suffix(".mp4.json"), result)
+            return result
+    except BaseException:
+        final_path.unlink(missing_ok=True)
+        final_path.with_suffix(".mp4.json").unlink(missing_ok=True)
+        raise

@@ -2,12 +2,14 @@
 Ayah Fetcher - Fetch ayah data with word timings and heuristic segmentation
 """
 from pathlib import Path
+import hashlib
+import json
 from typing import Callable, Dict, List, Any, Optional
 from loguru import logger
 
-from config.settings import RECITER_MAPPING_V4
+from config.settings import RECITER_MAPPING_V4, RECITERS
 from core.quran_api import get_ayah_text, get_ayah_translation
-from core.quran_v4_api import get_verse_audio_with_timings
+from core.word_timings import get_word_timings
 from core.audio_processor import download_and_process_ayah
 
 
@@ -77,20 +79,19 @@ def fetch_single_ayah(
         Dict with keys: ayah, audio_path, audio_duration, text,
         word_segments, word_texts, translation, start_time, end_time, segment_end
     """
+    if reciter_key not in RECITERS:
+        raise ValueError(f"Unknown reciter: {reciter_key}")
+    audio_dir.mkdir(parents=True, exist_ok=True)
     v4_reciter_id = RECITER_MAPPING_V4.get(reciter_key)
     audio_url: Optional[str] = None
     word_segments: List[Dict[str, Any]] = []
     word_texts: List[Dict[str, Any]] = []
 
-    # Only the audio URL is used from here. Per-word timings for the rendered
-    # text come from core.word_timings, which queries an endpoint that still
-    # returns segments; fetching word text and estimating segments here as well
-    # cost an extra API call per ayah for a result nothing consumed.
-    if v4_reciter_id:
-        try:
-            audio_url, _ = get_verse_audio_with_timings(v4_reciter_id, surah, ayah)
-        except Exception as e:
-            logger.warning(f"V4 API failed for {surah}:{ayah}, falling back: {e}")
+    # Words, timing and audio originate in ONE verse response. Expected timing
+    # errors propagate; selecting another recording would invalidate alignment.
+    timing = get_word_timings(reciter_key, surah, ayah)
+    if timing is not None:
+        audio_url = timing.audio_url
 
     # Download audio
     audio_path = download_and_process_ayah(
@@ -98,11 +99,26 @@ def fetch_single_ayah(
     )
 
     audio_duration = get_duration_fn(audio_path)
-
-    text = get_ayah_text(surah, ayah)
+    if timing is not None:
+        timing.validate_for_audio(audio_duration)
+        text = " ".join(timing.words)
+    else:
+        text = get_ayah_text(surah, ayah)
     text_with_marker = f"{text} ﴿{ayah}﴾"
 
     translation = get_ayah_translation(surah, ayah, "en")
+    text_source = {
+        "provider": "quran.com" if timing is not None else "alquran.cloud",
+        "edition": "text_uthmani" if timing is not None else "quran-uthmani",
+        "verse_key": f"{surah}:{ayah}",
+        "text_sha256": hashlib.sha256(text_with_marker.encode("utf-8")).hexdigest(),
+    }
+    timing_source = {"status": "not_available", "word_count": 0}
+    if timing is not None:
+        timing_source = {"status": "validated", "provider": "quran.com", "recitation_id": v4_reciter_id,
+            "word_count": len(timing.words), "segment_count": len(timing.starts_ms),
+            "segments_sha256": hashlib.sha256(json.dumps(list(zip(timing.starts_ms, timing.ends_ms)),
+                separators=(",", ":")).encode("utf-8")).hexdigest()}
 
     return {
         "ayah": ayah,
@@ -112,6 +128,12 @@ def fetch_single_ayah(
         "word_segments": word_segments,
         "word_texts": word_texts,
         "translation": translation,
+        "word_timing": timing,
+        "reciter_key": reciter_key,
+        "recording_url": audio_url or "https://everyayah.com/data/" + RECITERS[reciter_key]["id"] + f"/{surah:03d}{ayah:03d}.mp3",
+        "audio_source": "quran.com" if timing is not None else "everyayah.com",
+        "text_source": text_source,
+        "timing_source": timing_source,
         "start_time": current_time,
         "end_time": current_time + audio_duration,
         "segment_end": current_time + audio_duration + ayah_padding,

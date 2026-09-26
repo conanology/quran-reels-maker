@@ -10,6 +10,7 @@ from loguru import logger
 from requests.exceptions import RequestException
 
 from core.utils import retry_with_backoff
+from core.runtime_safety import atomic_write_json, exclusive_lock
 from config.settings import DATABASE_DIR
 
 # Constants
@@ -25,7 +26,8 @@ def _load_cache():
     if CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                _cache = json.load(f)
+                data = json.load(f)
+                _cache = data if isinstance(data, dict) else {}
             logger.debug(f"Loaded {len(_cache)} cached V4 entries")
         except Exception as e:
             logger.warning(f"Could not load V4 cache: {e}")
@@ -35,13 +37,21 @@ def _save_cache():
     """Save cache to disk"""
     try:
         DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(_cache, f, ensure_ascii=False, indent=2)
+        with exclusive_lock(Path(str(CACHE_FILE) + ".lock")):
+            stored = {}
+            if CACHE_FILE.exists():
+                try:
+                    stored = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+                    if not isinstance(stored, dict):
+                        stored = {}
+                except (ValueError, OSError):
+                    stored = {}
+            stored.update(_cache)
+            atomic_write_json(CACHE_FILE, stored)
     except Exception as e:
         logger.warning(f"Could not save V4 cache: {e}")
 
-# Load on import
-_load_cache()
+# Load only when a cache-consuming function is called.
 
 @retry_with_backoff(max_retries=3, exceptions=(RequestException,))
 def get_verse_audio_with_timings(reciter_id: int, surah: int, ayah: int) -> Tuple[Optional[str], List[Dict[str, Any]]]:
@@ -58,6 +68,8 @@ def get_verse_audio_with_timings(reciter_id: int, surah: int, ayah: int) -> Tupl
         word_segments is a list of dicts: {'word': 'Text', 'start_ms': 0, 'end_ms': 500}
     """
     # Create a unique cache key
+    if not _cache:
+        _load_cache()
     cache_key = f"audio_v4:{reciter_id}:{surah}:{ayah}"
     if cache_key in _cache:
         return _cache[cache_key]['audio_url'], _cache[cache_key]['segments']
@@ -164,9 +176,11 @@ def get_verse_audio_with_timings(reciter_id: int, surah: int, ayah: int) -> Tupl
             logger.warning(f"Audio for {surah}:{ayah} not found in API response")
             return None, []
 
+    except RequestException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch V4 audio: {e}")
-        return None, []
+        raise ValueError("Unusable Quran.com audio response") from e
 
 @retry_with_backoff(max_retries=3, exceptions=(RequestException,))
 def get_verse_words(surah: int, ayah: int) -> List[Dict[str, Any]]:
@@ -175,6 +189,8 @@ def get_verse_words(surah: int, ayah: int) -> List[Dict[str, Any]]:
     Endpoint: /verses/by_key/{verse_key}?words=true
     """
     cache_key = f"words:{surah}:{ayah}"
+    if not _cache:
+        _load_cache()
     if cache_key in _cache:
         return _cache[cache_key]
         
@@ -208,6 +224,8 @@ def get_verse_words(surah: int, ayah: int) -> List[Dict[str, Any]]:
         _save_cache()
         return cleaned_words
         
+    except RequestException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch words for {surah}:{ayah}: {e}")
-        return []
+        raise ValueError("Unusable Quran.com word response") from e

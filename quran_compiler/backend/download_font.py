@@ -1,15 +1,11 @@
-import os
-import urllib.request
+"""The Amiri font is bundled; this compatibility utility does not download at import."""
+from pathlib import Path
 
-font_url = "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf"
-output_dir = r"C:\Users\acona\.gemini\antigravity\scratch\quran_compiler\backend\assets\fonts"
-output_path = os.path.join(output_dir, "Amiri-Regular.ttf")
+def main():
+    path = Path(__file__).resolve().parent / "assets" / "fonts" / "Amiri-Regular.ttf"
+    if not path.is_file() or path.stat().st_size < 1024:
+        raise SystemExit("Bundled font is missing. Restore backend/assets/fonts/Amiri-Regular.ttf from the project checkout.")
+    print("Bundled Amiri font is available.")
 
-os.makedirs(output_dir, exist_ok=True)
-
-print(f"Downloading Amiri font from {font_url}...")
-try:
-    urllib.request.urlretrieve(font_url, output_path)
-    print(f"Successfully downloaded to {output_path}")
-except Exception as e:
-    print(f"Error downloading font: {e}")
+if __name__ == "__main__":
+    main()

@@ -4,7 +4,7 @@ Database Models - SQLite models for tracking verse progress and reel history
 import datetime
 from pathlib import Path
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean, CheckConstraint, inspect, text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 from config.settings import DATABASE_PATH
@@ -27,17 +27,25 @@ class RetryingSession(Session):
         from sqlalchemy.exc import OperationalError
         from loguru import logger
         
-        max_retries = 5
-        initial_backoff = 0.5
+        max_retries = 4
+        initial_backoff = 0.05
         backoff_factor = 2.0
         retries = 0
         backoff = initial_backoff
         
+        # rollback expires dirty objects and expunges new ones. Capture the intended
+        # write before flushing so a lock retry replays the transaction, not an
+        # inactive Session. Unique constraints still arbitrate competing writers.
+        added = list(self.new)
+        changed = [(obj, {a.key: getattr(obj, a.key) for a in inspect(obj).mapper.column_attrs})
+                   for obj in self.dirty]
+        deleted = list(self.deleted)
         while True:
             try:
                 super().commit()
                 return
             except OperationalError as e:
+                self.rollback()
                 is_locked = False
                 orig = getattr(e, 'orig', None)
                 if orig and isinstance(orig, sqlite3.OperationalError) and "locked" in str(orig).lower():
@@ -53,6 +61,13 @@ class RetryingSession(Session):
                     )
                     time.sleep(backoff)
                     backoff *= backoff_factor
+                    for obj in added:
+                        self.add(obj)
+                    for obj, values in changed:
+                        for key, value in values.items():
+                            setattr(obj, key, value)
+                    for obj in deleted:
+                        self.delete(obj)
                 else:
                     logger.error("Database lock retry attempts exhausted or non-lock error occurred.")
                     raise e
@@ -69,7 +84,7 @@ def get_engine():
             f"sqlite:///{DATABASE_PATH}",
             connect_args={
                 "check_same_thread": False,
-                "timeout": 60  # Wait up to 60 seconds for lock release
+                "timeout": 0.25  # bounded writer waits; transaction retry handles contention
             },
             echo=False
         )
@@ -93,7 +108,60 @@ def get_db_session() -> Session:
 def init_database():
     """Initialize the database and create tables."""
     engine = get_engine()
+    tables=set(inspect(engine).get_table_names())
+    with engine.connect() as connection:
+        has_legacy_state=any(connection.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar()>0
+                             for table in ('verse_progress','reel_history') if table in tables)
+        marker=connection.execute(text("SELECT value FROM app_settings WHERE key='publication_cursor_verified'")).scalar() if 'app_settings' in tables else None
+    if has_legacy_state and marker is None:
+        import sqlite3
+        backup_path=DATABASE_PATH.with_suffix('.pre-safety-migration.sqlite')
+        if not backup_path.exists():
+            source=engine.raw_connection()
+            try:
+                with sqlite3.connect(backup_path) as backup:
+                    source.driver_connection.backup(backup)
+            finally:
+                source.close()
+    # Back up an existing old schema before migration. The SQLite backup API
+    # copies a consistent image; never rewrite a user's backup or discard rows.
+    if 'video_analytics' in inspect(engine).get_table_names():
+        old_columns={c['name'] for c in inspect(engine).get_columns('video_analytics')}
+        backup_path=DATABASE_PATH.with_suffix('.pre-safety-migration.sqlite')
+        if 'private_metrics_verified' not in old_columns and not backup_path.exists():
+            import sqlite3
+            source=engine.raw_connection()
+            try:
+                with sqlite3.connect(backup_path) as backup:
+                    source.driver_connection.backup(backup)
+            finally:
+                source.close()
     Base.metadata.create_all(bind=engine)
+    # Existing databases retain their rows. Do not silently pick one of several
+    # journey cursors; this needs deliberate recovery by the owner.
+    with engine.begin() as connection:
+        connection.execute(text("INSERT OR IGNORE INTO app_settings(key,value) VALUES('publication_cursor_verified',:value)"),
+                           {'value':'false' if has_legacy_state else 'true'})
+        count = connection.execute(text("SELECT COUNT(*) FROM verse_progress")).scalar()
+        if count > 1:
+            raise RuntimeError("Multiple journey cursors exist; recover from backup before publishing")
+        connection.execute(text("""CREATE TRIGGER IF NOT EXISTS verse_progress_singleton
+            BEFORE INSERT ON verse_progress WHEN EXISTS(SELECT 1 FROM verse_progress)
+            BEGIN SELECT RAISE(ABORT, 'only one journey cursor is allowed'); END"""))
+        columns = {c['name'] for c in inspect(connection).get_columns('video_analytics')}
+        if 'private_metrics_verified' not in columns:
+            for name, declaration in [('metrics_source', "VARCHAR(30) DEFAULT 'legacy_unverified'"),
+                                      ('observed_at', 'DATETIME'),
+                                      ('private_metrics_verified', 'BOOLEAN DEFAULT 0')]:
+                if name not in columns:
+                    connection.execute(text(f'ALTER TABLE video_analytics ADD COLUMN {name} {declaration}'))
+            # Old defaults were fabricated, not measurements. SQLite permits NULL
+            # in these old columns. Preserve counts and attribution/history.
+            connection.execute(text('UPDATE video_analytics SET retention_rate=NULL, ctr=NULL'))
+        job_columns={c['name'] for c in inspect(connection).get_columns('publishing_jobs')}
+        for name,declaration in [('finalized','BOOLEAN DEFAULT 0'),('metadata_json','TEXT'),('manifest','TEXT'),('surah_end','INTEGER')]:
+            if name not in job_columns:
+                connection.execute(text(f'ALTER TABLE publishing_jobs ADD COLUMN {name} {declaration}'))
 
 
 class VerseProgress(Base):
@@ -102,6 +170,8 @@ class VerseProgress(Base):
     Only one row should exist in this table.
     """
     __tablename__ = "verse_progress"
+    __table_args__ = (CheckConstraint('current_surah >= 1 AND current_surah <= 114'),
+                      CheckConstraint('current_ayah >= 1'),)
     
     id = Column(Integer, primary_key=True, index=True)
     current_surah = Column(Integer, default=1, nullable=False)
@@ -208,8 +278,11 @@ class VideoAnalytics(Base):
     views = Column(Integer, default=0)
     likes = Column(Integer, default=0)
     comments = Column(Integer, default=0)
-    retention_rate = Column(Float, default=0.0)    # e.g., 0.45 for 45%
-    ctr = Column(Float, default=0.0)               # e.g., 0.05 for 5%
+    retention_rate = Column(Float, nullable=True, default=None)
+    ctr = Column(Float, nullable=True, default=None)
+    metrics_source = Column(String(30), default='manual')
+    observed_at = Column(DateTime, default=datetime.datetime.utcnow)
+    private_metrics_verified = Column(Boolean, nullable=False, default=False)
     engagement_rate = Column(Float, default=0.0)   # e.g., 0.35 for 35% (likes + comments) / views
     surah = Column(Integer, nullable=False)
     reciter_key = Column(String(50), nullable=False)
@@ -240,6 +313,30 @@ class ABTest(Base):
         return f"<ABTest(name={self.experiment_name}, status={self.status})>"
 
 
+class PublishingJob(Base):
+    """Durable content reservation, final review and remote transfer receipt."""
+    __tablename__ = 'publishing_jobs'
+    surah_end = Column(Integer, nullable=True)
+    id = Column(String(36), primary_key=True)
+    idempotency_key = Column(String(200), unique=True, nullable=False)
+    surah = Column(Integer, nullable=True)
+    start_ayah = Column(Integer, nullable=True)
+    end_ayah = Column(Integer, nullable=True)
+    reciter_key = Column(String(50), nullable=True)
+    sequential = Column(Integer, nullable=False, default=0)
+    status = Column(String(30), nullable=False, default='reserved')
+    finalized = Column(Boolean, nullable=False, default=False)
+    video_path = Column(Text, nullable=True)
+    package_hash = Column(String(64), nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    manifest = Column(Text, nullable=True)
+    approval = Column(Text, nullable=True)
+    receipts = Column(Text, nullable=False, default='{}')
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 
 
 # Utility functions for settings
@@ -268,5 +365,4 @@ def set_setting(key: str, value: str) -> None:
         session.close()
 
 
-# Initialize database on module import
-init_database()
+# Schema creation is explicit. Importing models must never mutate an existing DB.

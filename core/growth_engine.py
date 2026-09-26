@@ -6,6 +6,7 @@ import os
 import random
 import datetime
 import re
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import pytz
@@ -104,19 +105,19 @@ def get_current_slot(mecca_time: datetime.datetime) -> Optional[str]:
     hour = mecca_time.hour
     
     # Friday spiritual peak
-    if weekday == 4 and 20 <= hour <= 23:
+    if weekday == 4 and 21 <= hour < 23:
         return "friday_long"
         
     # Saturday bi-weekly sleep
-    if weekday == 5 and 21 <= hour <= 23:
+    if weekday == 5 and 22 <= hour < 24:
         return "saturday_sleep"
         
     # Daily morning short (Fajr time peak)
-    if 4 <= hour <= 7:
+    if 5 <= hour < 7:
         return "morning_short"
         
     # Daily evening short (Maghrib/Isha peak)
-    if 19 <= hour <= 22:
+    if 21 <= hour < 23:
         return "evening_short"
         
     return None
@@ -133,11 +134,10 @@ def get_slot_format(slot: str) -> str:
             weights=[0.50, 0.30, 0.20]
         )[0]
     elif slot == "friday_long":
-        # Alternates weekly between compilation and full surah
-        return random.choice(["weekly_compilation", "full_surah_long"])
+        return "full_surah_long"
     elif slot == "saturday_sleep":
         return "sleep_long"
-    return "standard_short"
+    raise ValueError(f"Unknown publishing slot: {slot}")
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +156,7 @@ def is_combo_repeated_recently(surah: int, reciter_key: str, days: int = 7) -> b
             ReelHistory.surah == surah,
             ReelHistory.reciter_key == reciter_key,
             ReelHistory.created_at >= cutoff
+            , ReelHistory.status == "uploaded"
         ).first()
         if recent_reel:
             return True
@@ -165,6 +166,7 @@ def is_combo_repeated_recently(surah: int, reciter_key: str, days: int = 7) -> b
             LongformHistory.surah_start == surah,
             LongformHistory.reciter_key == reciter_key,
             LongformHistory.created_at >= cutoff
+            , LongformHistory.status == "uploaded"
         ).first()
         if recent_long:
             return True
@@ -190,11 +192,8 @@ def pick_surah(format_type: str, reciter_key: str) -> int:
     from database.models import get_setting
     import json
     
+    # Legacy optimization weights were derived from unverified/default metrics.
     downweights = {}
-    try:
-        downweights = json.loads(get_setting("growth_engine_downweights", "{}"))
-    except Exception:
-        pass
 
     if "short" in format_type:
         # Volume play: proceed sequentially through current progress
@@ -203,16 +202,8 @@ def pick_surah(format_type: str, reciter_key: str) -> int:
             progress = session.query(VerseProgress).first()
             if progress:
                 surah = progress.current_surah
-                # Ensure guardrail check
-                key = f"{surah}:{reciter_key}"
-                is_repeated = is_combo_repeated_recently(surah, reciter_key, days=7)
-                is_downweighted = downweights.get(key, 1.0) < 0.5
-                
-                if is_repeated or is_downweighted:
-                    # Pick a random short surah from last 20 surahs to avoid duplicate/underperformer
-                    surah = random.randint(100, 114)
                 return surah
-            return random.randint(90, 114)
+            return 1
         finally:
             session.close()
             
@@ -272,11 +263,14 @@ def generate_engine_title(
     mode: str, 
     surah: int, 
     reciter_key: str, 
-    surah_end: Optional[int] = None
+    surah_end: Optional[int] = None,
+    *, coverage_complete: bool = False,
+    start_ayah: Optional[int] = None,
+    end_ayah: Optional[int] = None,
 ) -> str:
     """
     Generate video title matching the 4-mode blueprint template.
-    Guarantees a vidIQ-equivalent score >= 80/100.
+    Uses verified coverage. The local keyword score is advisory, not vidIQ data.
     """
     name_ar = SURAH_NAMES_AR[surah - 1]
     name_en = SURAH_NAMES_EN[surah - 1]
@@ -292,11 +286,13 @@ def generate_engine_title(
         elif mode == "arabic_short_gulf":
             title = f"سورة {name_ar} - {rec_ar} | تلاوة هادئة للنوم 🌙"
         elif mode == "bilingual_long":
-            end_label = f" to {SURAH_NAMES_EN[surah_end-1]}" if surah_end and surah_end != surah else " Full"
-            title = f"سورة {name_ar} كاملة | Surah {name_en}{end_label} - Beautiful Recitation 🕊️"
+            end_label = f" to {SURAH_NAMES_EN[surah_end-1]}" if surah_end and surah_end != surah else ""
+            full_label = " كاملة" if coverage_complete else ""
+            title = f"سورة {name_ar}{full_label} | Surah {name_en}{end_label} - Quran Recitation"
         elif mode == "english_seo_long":
-            end_label = f" to {SURAH_NAMES_EN[surah_end-1]}" if surah_end and surah_end != surah else " Full"
-            title = f"Surah {name_en}{end_label} - {rec_en} | Beautiful Quran Recitation for Sleep 🌙"
+            end_label = f" to {SURAH_NAMES_EN[surah_end-1]}" if surah_end and surah_end != surah else ""
+            full_label = " Full" if coverage_complete else ""
+            title = f"Surah {name_en}{end_label}{full_label} - {rec_en} | Quran Recitation"
         else:
             title = f"Surah {name_en} - {rec_en} | Beautiful Recitation 🤍"
 
@@ -310,14 +306,16 @@ def generate_engine_title(
             return title
             
     # Final robust fallback
-    return f"Surah {name_en} Full - {rec_en} | Beautiful Quran Recitation 🕊️"
+    full_label = " Full" if coverage_complete else ""
+    verse_label = f" {start_ayah}-{end_ayah}" if start_ayah is not None and end_ayah is not None else ""
+    return f"Surah {name_en}{full_label}{verse_label} - {rec_en} | Quran Recitation"[:100]
 
 
 # ---------------------------------------------------------------------------
 # Module 5: Thumbnail Customizer
 # ---------------------------------------------------------------------------
 
-def get_thumbnail_template_for_format(format_type: str) -> str:
+def get_thumbnail_template_for_format(format_type: str, *, persist: bool = True, read_history: bool = True) -> str:
     """
     Determine the thumbnail template, enforcing the blueprint guardrail:
     - Rotate templates evenly.
@@ -334,7 +332,7 @@ def get_thumbnail_template_for_format(format_type: str) -> str:
     elif format_type == "weekly_compilation":
         hard_template = "Mosque Gold"
         
-    last_template = get_setting("last_thumbnail_template", "")
+    last_template = get_setting("last_thumbnail_template", "") if read_history else ""
     templates = ["Reciter Showcase", "Mosque Gold", "Open Quran", "Kaaba Night"]
     
     if hard_template:
@@ -351,7 +349,8 @@ def get_thumbnail_template_for_format(format_type: str) -> str:
             selected = random.choice(templates)
             
     # Persist choice for the next execution
-    set_setting("last_thumbnail_template", selected)
+    if persist:
+        set_setting("last_thumbnail_template", selected)
     return selected
 
 
@@ -360,16 +359,10 @@ def get_thumbnail_template_for_format(format_type: str) -> str:
 # ---------------------------------------------------------------------------
 
 def is_publishing_suppressed() -> bool:
-    """
-    Smart trigger: Auto-suppress or delay scheduling during high-velocity periods
-    such as the last 10 days of Ramadan to avoid algorithm saturation.
-    """
-    # For simulation, can be controlled via environment variable or calendar check
+    """Honor the explicit operator suppression switch."""
     suppress = os.getenv("SUPPRESS_DURING_RAMADAN_LAST_10", "false").lower() == "true"
     if suppress:
-        # Checks if current date is during last 10 days of Ramadan
-        # (Ramadan dates shift yearly, would check Islamic calendar API/library in production)
-        logger.warning("Auto-suppression active (Ramadan Peak Period). High competition detected.")
+        logger.warning("Publishing suppression is enabled by configuration")
         return True
     return False
 
@@ -379,277 +372,156 @@ def is_publishing_suppressed() -> bool:
 # ---------------------------------------------------------------------------
 
 def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
-    """
-    Orchestrate the entire DailyQuran Growth Engine slot run.
-    1. Check timezone and slot.
-    2. Select format, surah, and reciter.
-    3. Generate video (Short or Longform).
-    4. Generate scored titles and optimized thumbnails.
-    5. Post to YouTube channel.
-    """
-    logger.info("🎬 Initializing DailyQuran Growth Engine Orchestration...")
-    
-    # Check suppression guardrail
+    """Select a slot without side effects in dry-run; serialize actual publication."""
     if is_publishing_suppressed() and not dry_run:
-        logger.info("Publishing is suppressed. Skipping compilation/posting.")
-        return {"status": "suppressed", "message": "High-velocity period suppression active."}
-
-    # Fail fast on dead credentials. get_authenticated_service() falls back to an
-    # interactive OAuth flow when creds are None, which blocks forever on a headless
-    # runner and burns the whole 180-minute job timeout. 'expired' is fine: it refreshes.
+        return {"status": "suppressed", "message": "Publishing suppression is enabled."}
     if not dry_run:
         from youtube.auth import check_authentication_status
-
-        auth_status = check_authentication_status()
-        if auth_status["status"] == "not_authenticated":
-            logger.error(f"YouTube auth unavailable before render: {auth_status['message']}")
-            return {
-                "status": "failed",
-                "error": f"YouTube not authenticated: {auth_status['message']}",
-            }
-
-    mecca_time = get_mecca_time()
-    logger.info(f"Mecca Time (UTC+3): {mecca_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # 1. Determine slot
+        status = check_authentication_status()
+        if status["status"] == "not_authenticated":
+            return {"status": "failed", "error": "YouTube not authenticated: " + status.get("message", "")}
+    now = get_mecca_time()
+    slot_name = slot_name or get_current_slot(now)
     if not slot_name:
-        slot_name = get_current_slot(mecca_time)
-        if not slot_name:
-            logger.info("No active Mecca timezone slot detected. Defaulting to 'evening_short' template.")
-            slot_name = "evening_short"
-            
+        return {"status": "skipped", "message": "No active publishing window."}
+    if slot_name not in {"morning_short", "evening_short", "friday_long", "saturday_sleep"}:
+        return {"status": "failed", "error": "Unknown publishing slot."}
+    if slot_name == "saturday_sleep":
+        return {"status": "skipped", "message": "Sleep format is unavailable until a reviewed complete format is implemented."}
     format_type = get_slot_format(slot_name)
-    logger.info(f"Slot Selected: '{slot_name}' -> Format: '{format_type}'")
-    
-    # 2. Select Reciter & Surah (checking for queued outperforming combos from the feedback loop first)
-    from database.models import get_setting, set_setting
-    import json
-    
-    forced_combo_used = False
-    reciter_key = None
-    surah = None
-    
-    if "short" in format_type:
-        forced_combos_str = get_setting("growth_engine_forced_combos", "[]")
-        try:
-            forced_combos = json.loads(forced_combos_str)
-            if forced_combos:
-                next_combo = forced_combos.pop(0)
-                surah = next_combo["surah"]
-                reciter_key = next_combo["reciter_key"]
-                set_setting("growth_engine_forced_combos", json.dumps(forced_combos))
-                forced_combo_used = True
-                logger.info(f"🚀 Outperforming combo detected from feedback loop! Duplicating Surah {surah} + Reciter {reciter_key} for views optimization.")
-        except Exception as e:
-            logger.warning(f"Failed to process forced combos: {e}")
-            
-    if not forced_combo_used:
-        reciter_key = pick_reciter(format_type)
-        surah = pick_surah(format_type, reciter_key)
-        
-    logger.info(f"AI Decision: Surah {surah} ({SURAH_NAMES_EN[surah-1]}), Reciter: {reciter_key}")
-    
-    # 3. Handle Generation & Metadata
-    title_mode = "arabic_short_core"
-    if "long" in format_type or "compilation" in format_type:
-        title_mode = "english_seo_long" if format_type == "sleep_long" else "bilingual_long"
-    elif format_type == "gulf_short":
-        title_mode = "arabic_short_gulf"
-        
-    title = generate_engine_title(title_mode, surah, reciter_key)
-    thumb_template = get_thumbnail_template_for_format(format_type)
-    bg_visual_prompt = THUMBNAIL_PROMPTS[thumb_template]
-    
-    logger.info(f"Metadata Mode: '{title_mode}' | Scored Title: '{title}'")
-    logger.info(f"Thumbnail Layout: '{thumb_template}' | Background Prompt: '{bg_visual_prompt}'")
-    
     if dry_run:
-        logger.success("🎯 DRY RUN SUCCESSFUL. Complete growth engine decision matrix generated.")
-        return {
-            "status": "dry_run",
-            "slot": slot_name,
-            "format": format_type,
-            "surah": surah,
-            "reciter": reciter_key,
-            "title": title,
-            "thumbnail_template": thumb_template,
-            "bg_prompt": bg_visual_prompt
-        }
-        
-    # Execute actual build & upload
+        # No settings reads: even opening a store can initialize it on a fresh checkout.
+        surah, reciter = 1, DEFAULT_RECITER
+        template = get_thumbnail_template_for_format(format_type, persist=False, read_history=False)
+        return {"status": "dry_run", "slot": slot_name, "format": format_type,
+                "surah": surah, "reciter": reciter,
+                "title": generate_engine_title("arabic_short_core", surah, reciter),
+                "thumbnail_template": template, "bg_prompt": THUMBNAIL_PROMPTS[template],
+                "message": "Illustrative plan only; persisted selection is evaluated during an actual job."}
+    from core.runtime_safety import exclusive_lock, LockTimeoutError
+    from config.settings import DATABASE_PATH
     try:
-        from youtube.uploader import upload_video, upload_thumbnail
-        from core.verse_scheduler import advance_progress, record_reel_history
-        from longform.scheduler import record_compilation, update_compilation_youtube
-        
-        video_path = None
-        thumbnail_path = None
-        metadata = {}
-        
+        with exclusive_lock(DATABASE_PATH.parent / "publishing.lock", timeout=0):
+            return _execute_selected_slot(slot_name, format_type, now)
+    except LockTimeoutError:
+        return {"status": "skipped", "message": "Another publishing job is active."}
+    except Exception as exc:
+        logger.error("Growth job failed ({})", type(exc).__name__)
+        return {"status": "failed", "error": str(exc)}
+
+
+def _execute_selected_slot(slot_name, format_type, now):
+    from database.models import get_setting, set_setting
+    from database.jobs import reserve_job, mark_job, finalize_published_job
+    from notifications.publishing_policy import require_automatic_approval
+    from youtube.uploader import upload_video, upload_thumbnail
+    from core.utils import load_media_manifest, require_manifest_coverage
+    import json
+
+    # Fail before expensive rendering if review/account policy is not configured.
+    required = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_APPROVER_ID", "YOUTUBE_EXPECTED_CHANNEL_ID")
+    if any(not os.getenv(key, "").strip() for key in required):
+        return {"status": "failed", "error": "Automatic publication requires reviewer and expected account configuration."}
+    from database.models import init_database
+    from core.verse_scheduler import get_current_progress
+    init_database()
+    current = get_current_progress()
+    reciter = pick_reciter(format_type)
+    surah = pick_surah(format_type, reciter)
+    start_ayah = 1
+    sequential = "short" in format_type and current["surah"] == surah
+    session = get_db_session()
+    try:
+        progress = session.query(VerseProgress).first()
+        if "short" in format_type and progress and progress.current_surah == surah:
+            start_ayah = progress.current_ayah
+            sequential = True
+    finally:
+        session.close()
+    end_ayah = min(start_ayah + 2, VERSE_COUNTS[surah]) if "short" in format_type else VERSE_COUNTS[surah]
+    job = reserve_job(f"growth:{now.date().isoformat()}:{slot_name}", surah=surah,
+                      start_ayah=start_ayah, end_ayah=end_ayah, reciter_key=reciter, sequential=sequential,
+                      surah_end=surah if "short" not in format_type else None)
+    if job.get("finalized") or job.get("status") not in {"reserved", "pending"}:
+        return {"status": "skipped", "message": "This occurrence already has a job; reconcile it before retrying.", "job_id": job["id"]}
+    # The persisted reservation owns the content, including after interruption.
+    surah, start_ayah, end_ayah, reciter = job["surah"], job["start_ayah"], job["end_ayah"], job["reciter_key"]
+    sequential = bool(job["sequential"])
+    completed_receipt = None
+    try:
+        template = get_thumbnail_template_for_format(format_type, persist=False)
+        thumbnail = None
         if "short" in format_type:
-            # Generate Shorts
-            logger.info("Executing Short generation pipeline...")
-            start_ayah = 1
-            # Retrieve current progress ayah
-            session = get_db_session()
-            try:
-                progress = session.query(VerseProgress).first()
-                if progress and progress.current_surah == surah:
-                    start_ayah = progress.current_ayah
-            finally:
-                session.close()
-                
-            # Render Short (e.g. 3 verses)
-            end_ayah = min(start_ayah + 2, VERSE_COUNTS[surah])
-            
-            logger.info(f"Rendering Short: Surah {surah} Ayahs {start_ayah}-{end_ayah}...")
-            video_path, act_start, act_end = generate_reel(
-                surah=surah,
-                start_ayah=start_ayah,
-                end_ayah=end_ayah,
-                reciter_key=reciter_key
-            )
-            
-            # Form metadata description
-            description = (
-                f"Beautiful Quran recitation of Surah {SURAH_NAMES_EN[surah-1]} "
-                f"verses {act_start}-{act_end}. Recited by {RECITERS[reciter_key]['name_en']}.\n\n"
-                f"#Quran #Shorts #DailyQuran"
-            )
-            metadata = {
-                "recommended_title": title,
-                "description": description,
-                "tags": ["Quran", "Shorts", SURAH_NAMES_EN[surah-1], RECITERS[reciter_key]["name_en"]]
-            }
-            
-            # Post Video
-            logger.info("Posting Short to YouTube...")
-            upload_result = upload_video(
-                video_path,
-                {
-                    "title": title,
-                    "description": description,
-                    "tags": metadata["tags"]
-                },
-                privacy_status="public"
-            )
-            
-            # Record in progress database
-            record_reel_history(
-                surah=surah,
-                start_ayah=act_start,
-                end_ayah=act_end,
-                reciter_key=reciter_key,
-                video_path=str(video_path),
-                youtube_id=upload_result["video_id"]
-            )
-            advance_progress(surah, act_end)
-            
-            # === POST TO TIKTOK ===
-            from tiktok.uploader import is_configured, upload_to_tiktok, generate_tiktok_metadata
-            if is_configured():
-                logger.info("TikTok is configured. Uploading Short to TikTok...")
-                try:
-                    tiktok_meta = generate_tiktok_metadata(
-                        surah_name_ar=SURAH_NAMES_AR[surah - 1],
-                        surah_name_en=SURAH_NAMES_EN[surah - 1],
-                        surah_num=surah,
-                        start_ayah=act_start,
-                        end_ayah=act_end,
-                        reciter_name_ar=RECITERS.get(reciter_key, {}).get("name_ar", reciter_key)
-                    )
-                    tt_res = upload_to_tiktok(video_path, tiktok_meta)
-                    if tt_res and tt_res.get('status') == 'uploaded':
-                        logger.info(f"Successfully uploaded to TikTok! Publish ID: {tt_res.get('publish_id')}")
-                    else:
-                        logger.error(f"TikTok upload failed: {tt_res.get('error', 'Unknown error') if tt_res else 'No response'}")
-                except Exception as e:
-                    logger.exception(f"TikTok upload failed with exception: {e}")
-            else:
-                logger.info("TikTok not configured or authorized. Skipping automated TikTok upload.")
-                logger.info("==================================================")
-                logger.info("📢 MANUAL TIKTOK UPLOAD INFORMATION")
-                logger.info("==================================================")
-                logger.info(f"📁 Video File Location: {video_path}")
-                try:
-                    tiktok_meta = generate_tiktok_metadata(
-                        surah_name_ar=SURAH_NAMES_AR[surah - 1],
-                        surah_name_en=SURAH_NAMES_EN[surah - 1],
-                        surah_num=surah,
-                        start_ayah=act_start,
-                        end_ayah=act_end,
-                        reciter_name_ar=RECITERS.get(reciter_key, {}).get("name_ar", reciter_key)
-                    )
-                    logger.info(f"📝 Caption & Hashtags:\n\n{tiktok_meta['caption']}")
-                except Exception as e:
-                    logger.error(f"Failed to generate manual TikTok metadata: {e}")
-                logger.info("==================================================")
-            
+            video_path, actual_start, actual_end = generate_reel(surah=surah, start_ayah=start_ayah,
+                                                               end_ayah=end_ayah, reciter_key=reciter)
+            if actual_start != start_ayah:
+                raise ValueError("Generated Shorts must begin at the reserved verse")
+            title = generate_engine_title("arabic_short_core", surah, reciter,
+                                          start_ayah=actual_start, end_ayah=actual_end)
+            metadata = {"title": title,
+                        "description": f"Surah {SURAH_NAMES_EN[surah-1]}, verses {actual_start}-{actual_end}. "
+                                       f"Reciter: {RECITERS[reciter]['name_en']}.\n#Quran #Shorts",
+                        "tags": ["Quran", "Shorts", SURAH_NAMES_EN[surah-1], RECITERS[reciter]["name_en"]]}
+            history = dict(surah=surah, start_ayah=actual_start, end_ayah=actual_end,
+                           reciter_key=reciter, video_path=str(video_path))
         else:
-            # Generate Longform (compilation, full surah, or sleep video)
-            logger.info("Executing Long-form compilation pipeline...")
-            # For testing compile a single Surah or smaller loop to keep rendering reasonable
-            # Compile Al-Kawthar (Surah 108) as a test if it's full surah, otherwise standard compile
-            comp_surah = surah
-            logger.info(f"Compiling long-form for Surah {comp_surah}...")
-            
-            # Call generate_longform which automatically creates video + scored title + thumbnail
-            metadata = generate_longform(
-                surah_start=comp_surah,
-                surah_end=comp_surah,
-                reciter_key=reciter_key,
-                loop_count=1,
-                thumbnail_template=thumb_template,
-                custom_bg_prompt=bg_visual_prompt
-            )
-            
-            video_path = Path(metadata["output_path"])
-            thumbnail_path_str = metadata.get("thumbnail_path")
-            
-            # Post Video
-            logger.info("Posting Long-form to YouTube...")
-            upload_result = upload_video(
-                video_path,
-                {
-                    "title": title, # Use vidIQ scored title
-                    "description": metadata["description"],
-                    "tags": metadata["tags"]
-                },
-                privacy_status="public"
-            )
-            
-            # Set Custom Thumbnail
-            if thumbnail_path_str:
-                thumbnail_path = Path(thumbnail_path_str)
-                if thumbnail_path.exists():
-                    upload_thumbnail(upload_result["video_id"], thumbnail_path)
-            
-            # Record compilation
-            history_id = record_compilation(
-                title=title,
-                surah_start=comp_surah,
-                surah_end=comp_surah,
-                num_clips=VERSE_COUNTS[comp_surah],
-                source_clip_ids=[],
-                duration_seconds=metadata["duration_seconds"],
-                video_path=str(video_path),
-                ayah_start=1,
-                ayah_end=VERSE_COUNTS[comp_surah],
-                reciter_key=reciter_key
-            )
-            update_compilation_youtube(history_id, upload_result["video_id"])
-            
-        logger.success(f"🎉 Slot execution complete! Posted successfully: {upload_result['url']}")
-        return {
-            "status": "success",
-            "url": upload_result["url"],
-            "video_id": upload_result["video_id"],
-            "title": title
-        }
-        
-    except Exception as e:
-        logger.exception(f"Failed executing growth engine slot: {e}")
-        return {"status": "failed", "error": str(e)}
+            compiled = generate_longform(surah_start=surah, surah_end=surah, reciter_key=reciter,
+                                         loop_count=1, thumbnail_template=template,
+                                         custom_bg_prompt=THUMBNAIL_PROMPTS[template])
+            video_path = Path(compiled["output_path"])
+            actual_start, actual_end = 1, VERSE_COUNTS[surah]
+            title = compiled.get("recommended_title") or compiled.get("title")
+            if not title:
+                raise ValueError("Verified longform metadata has no title")
+            metadata = {"title": title, "description": compiled["description"], "tags": compiled["tags"]}
+            thumbnail = compiled.get("thumbnail_path")
+            history = dict(kind="longform", title=title, surah_start=surah, surah_end=surah,
+                           ayah_start=actual_start, ayah_end=actual_end, reciter_key=reciter,
+                           num_clips=VERSE_COUNTS[surah], source_clip_ids=[],
+                           duration_seconds=compiled["duration_seconds"], video_path=str(video_path))
+        manifest = load_media_manifest(video_path)
+        if manifest.get("coverage_complete") is not True:
+            raise ValueError("Verified complete media coverage is required before publication")
+        require_manifest_coverage(manifest, surah_start=surah, start_ayah=actual_start,
+                                  surah_end=surah, end_ayah=actual_end, reciter_key=reciter)
+        mark_job(job["id"], "generated", video_path=str(video_path), start_ayah=actual_start, end_ayah=actual_end,
+                 manifest=manifest, metadata_json=json.dumps(metadata, ensure_ascii=False))
+        approval = require_automatic_approval(video_path, metadata, job_id=job["id"],
+                                              manifest=manifest, privacy_status="public", thumbnail_path=thumbnail)
+        receipt = upload_video(video_path, metadata, privacy_status="public", automatic=True,
+                               job_id=job["id"], approval=approval, thumbnail_path=thumbnail)
+        if receipt.get("status") != "published":
+            raise ValueError("Upload is not confirmed published; reconcile the saved receipt")
+        finalize_published_job(job["id"], history, receipt)
+        completed_receipt = receipt
+        set_setting("last_thumbnail_template", template)
+        # Custom thumbnail publication uses the exact reviewed bytes.
+        if thumbnail and approval.get("thumbnail_sha256") and Path(thumbnail).is_file():
+            from core.asset_provenance import checksum
+            if checksum(thumbnail) != approval["thumbnail_sha256"]:
+                raise ValueError("Thumbnail changed after review")
+            upload_thumbnail(receipt["video_id"], Path(thumbnail), automatic=True, approval=approval)
+        # Cross-posting needs a separately approved account/privacy/package.
+        if os.getenv("ENABLE_TIKTOK_AUTOPUBLISH", "false").lower() == "true" and "short" in format_type:
+            from tiktok.uploader import generate_tiktok_metadata, upload_to_tiktok
+            caption = generate_tiktok_metadata(SURAH_NAMES_AR[surah-1], SURAH_NAMES_EN[surah-1],
+                                               surah, actual_start, actual_end, RECITERS[reciter]["name_ar"])
+            caption.update(title=metadata["title"], description=caption["caption"], tags=[])
+            tt_approval = require_automatic_approval(video_path, caption, job_id=job["id"],
+                                                     platform="tiktok", manifest=manifest, privacy_status="PUBLIC_TO_EVERYONE")
+            tt_result = upload_to_tiktok(video_path, caption, automatic=True, job_id=job["id"],
+                                        approval=tt_approval, privacy_status="PUBLIC_TO_EVERYONE")
+            if tt_result.get("status") not in {"published", "processed"}:
+                return {"status": "partial", "video_id": receipt["video_id"], "error": "TikTok is not confirmed complete; reconcile receipt."}
+        return {"status": "success", "url": receipt["url"], "video_id": receipt["video_id"], "title": title}
+    except Exception as exc:
+        if completed_receipt is not None:
+            mark_job(job["id"], "published", error_message="Post-publication step failed: " + str(exc))
+            return {"status": "partial", "video_id": completed_receipt["video_id"],
+                    "url": completed_receipt["url"], "error": str(exc),
+                    "message": "YouTube publication is complete; reconcile the remaining step without reposting."}
+        mark_job(job["id"], "failed", error_message=str(exc))
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -665,12 +537,25 @@ def ingest_video_analytics(
     ctr: float,
     surah: int,
     reciter_key: str,
-    video_type: str
+    video_type: str,
+    *, metrics_source: str = "manual", private_metrics_verified: bool = False,
 ) -> Dict[str, Any]:
     """
     Ingest performance metrics for an uploaded video into the analytics database.
     """
     from database.models import get_db_session, VideoAnalytics
+
+    if not video_id or not isinstance(video_id, str) or len(video_id) > 50:
+        raise ValueError("A valid video ID is required")
+    for name, value in [("views", views), ("likes", likes), ("comments", comments)]:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{name} must be a nonnegative integer")
+    for name, value in [("retention_rate", retention_rate), ("ctr", ctr)]:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                  or not math.isfinite(value) or not 0 <= value <= 1):
+            raise ValueError(f"{name} must be unknown or a finite rate between zero and one")
+    if surah not in VERSE_COUNTS or video_type not in {"short", "long"}:
+        raise ValueError("Invalid content identity")
 
     # LongformHistory.reciter_key is nullable but VideoAnalytics.reciter_key is
     # not, so an older compilation with no reciter recorded would otherwise
@@ -691,6 +576,9 @@ def ingest_video_analytics(
             record.retention_rate = retention_rate
             record.ctr = ctr
             record.engagement_rate = engagement_rate
+            record.metrics_source = metrics_source
+            record.observed_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            record.private_metrics_verified = private_metrics_verified
         else:
             record = VideoAnalytics(
                 video_id=video_id,
@@ -702,7 +590,10 @@ def ingest_video_analytics(
                 engagement_rate=engagement_rate,
                 surah=surah,
                 reciter_key=reciter_key,
-                video_type=video_type
+                video_type=video_type,
+                metrics_source=metrics_source,
+                observed_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+                private_metrics_verified=private_metrics_verified,
             )
             session.add(record)
         session.commit()
@@ -718,186 +609,37 @@ def ingest_video_analytics(
 
 
 def run_feedback_loop_analysis() -> Dict[str, Any]:
-    """
-    Analyze recent video performance and update selection weights, durations,
-    and trigger A/B tests or warnings matching the blueprint optimization rules.
-    """
-    from database.models import get_db_session, VideoAnalytics, get_setting, set_setting
-    import json
-    
+    """Read-only review signals. Uncalibrated metrics never change publishing decisions."""
+    from database.models import get_db_session, VideoAnalytics
     session = get_db_session()
-    actions = []
-    warnings = []
-    
     try:
-        # Retrieve all recent analytics records
-        analytics = session.query(VideoAnalytics).order_by(VideoAnalytics.created_at.desc()).limit(50).all()
-        if not analytics:
-            return {"status": "no_data", "message": "No video analytics data available for feedback loop."}
-            
-        # Load current downweights and forced combos
-        downweights_str = get_setting("growth_engine_downweights", "{}")
-        try:
-            downweights = json.loads(downweights_str)
-        except Exception:
-            downweights = {}
-            
-        forced_combos_str = get_setting("growth_engine_forced_combos", "[]")
-        try:
-            forced_combos = json.loads(forced_combos_str)
-        except Exception:
-            forced_combos = []
-            
-        for record in analytics:
-            key = f"{record.surah}:{record.reciter_key}"
-            
-            # Short-form checks
-            if record.video_type == "short":
-                # Metric 1: Short engagement < 30% -> Underperform -> Reduce combination weight
-                if record.engagement_rate < 0.30:
-                    current_weight = downweights.get(key, 1.0)
-                    new_weight = max(0.1, current_weight - 0.2) # reduce weight by 20%
-                    downweights[key] = new_weight
-                    actions.append(f"Short {record.video_id} ({key}) engagement < 30% ({record.engagement_rate:.1%}). Reduced combo weight to {new_weight:.1f}")
-                
-                # Metric 2: Short engagement > 60% -> Outperform -> Duplicate combo
-                elif record.engagement_rate > 0.60:
-                    combo = {"surah": record.surah, "reciter_key": record.reciter_key}
-                    if combo not in forced_combos:
-                        forced_combos.append(combo)
-                        actions.append(f"Short {record.video_id} ({key}) engagement > 60% ({record.engagement_rate:.1%}). Queued combo for duplication.")
-                        
-            # Long-form checks
-            elif record.video_type == "long":
-                # Metric 3: Long-form retention < 40% -> Underperform -> Test shorter clip rotation
-                if record.retention_rate < 0.40:
-                    set_setting("longform_clip_duration", "6") # Set to 6s
-                    actions.append(f"Long-form {record.video_id} retention < 40% ({record.retention_rate:.1%}). Set clip rotation to 6-second clips.")
-                    
-            # Common checks
-            # Metric 4: CTR < 4% -> Thumbnail weak -> Request A/B test
-            if record.ctr < 0.04:
-                set_setting("request_ab_test_thumbnail", "true")
-                actions.append(f"Video {record.video_id} CTR < 4% ({record.ctr:.1%}). Thumbnail flagged for A/B testing.")
-                
-            # Metric 5: Comments > 20 -> Engagement winner -> Warn/Instruct
-            if record.comments > 20:
-                warnings.append(f"Engagement winner: Video {record.video_id} has {record.comments} comments! Pin related long-form link.")
-                
-        # Persist updated settings
-        set_setting("growth_engine_downweights", json.dumps(downweights))
-        set_setting("growth_engine_forced_combos", json.dumps(forced_combos))
-        
-        logger.success(f"Feedback loop completed. Applied {len(actions)} optimization actions.")
-        return {
-            "status": "success",
-            "actions_applied": actions,
-            "warnings_triggered": warnings,
-            "updated_downweights": downweights,
-            "queued_forced_combos": forced_combos
-        }
-        
+        rows = session.query(VideoAnalytics).order_by(VideoAnalytics.created_at.desc()).limit(50).all()
+        if not rows:
+            return {"status": "no_data", "actions_applied": [], "warnings_triggered": []}
+        signals = []
+        for row in rows:
+            if row.views < 1000:
+                continue
+            signals.append({"video_id": row.video_id, "views": row.views,
+                            "likes_comments_per_view": row.engagement_rate,
+                            "retention": row.retention_rate if getattr(row, "private_metrics_verified", False) is True else None,
+                            "ctr": row.ctr if getattr(row, "private_metrics_verified", False) is True else None})
+        return {"status": "success", "mode": "advisory", "actions_applied": [],
+                "warnings_triggered": [], "signals": signals,
+                "message": "No automatic weight changes; age/exposure and measured private metrics require review."}
     finally:
         session.close()
 
 
 def trigger_ab_test_experiment(variable_type: str) -> Dict[str, Any]:
-    """
-    Every 7 days, trigger one controlled A/B test experiment.
-    Variables: reciter, ayah_length, thumbnail_style
-    """
-    from database.models import get_db_session, ABTest
-    import uuid
-    import datetime
-    
-    if variable_type not in ["reciter", "ayah_length", "thumbnail_style"]:
-        raise ValueError(f"Invalid A/B test variable: {variable_type}")
-        
-    session = get_db_session()
-    try:
-        video_id_a = f"ab_a_{uuid.uuid4().hex[:8]}"
-        video_id_b = f"ab_b_{uuid.uuid4().hex[:8]}"
-        
-        experiment_name = f"exp_{variable_type}_{datetime.date.today().isoformat()}"
-        
-        test = ABTest(
-            experiment_name=experiment_name,
-            variable_type=variable_type,
-            video_id_a=video_id_a,
-            video_id_b=video_id_b,
-            status="active"
-        )
-        session.add(test)
-        session.commit()
-        
-        logger.info(f"Registered new A/B Test Experiment: '{experiment_name}' (Variable: {variable_type})")
-        return {
-            "status": "success",
-            "experiment_name": experiment_name,
-            "variable_type": variable_type,
-            "video_id_a": video_id_a,
-            "video_id_b": video_id_b
-        }
-    finally:
-        session.close()
+    if variable_type not in {"reciter", "ayah_length", "thumbnail_style"}:
+        raise ValueError("Invalid experiment variable")
+    return {"status": "unavailable", "message": "Experiments require reviewed real variants and matched exposure; no synthetic IDs are created."}
 
 
 def evaluate_active_ab_tests() -> List[Dict[str, Any]]:
-    """
-    Check all active A/B tests, pull their metrics, select the winner, and adjust defaults.
-    """
-    from database.models import get_db_session, ABTest, VideoAnalytics, set_setting
-    import datetime
-    
-    session = get_db_session()
-    results = []
-    
-    try:
-        active_tests = session.query(ABTest).filter_by(status="active").all()
-        for test in active_tests:
-            # Look up metrics
-            metric_a = session.query(VideoAnalytics).filter_by(video_id=test.video_id_a).first()
-            metric_b = session.query(VideoAnalytics).filter_by(video_id=test.video_id_b).first()
-            
-            # Require both metrics to evaluate
-            if not metric_a or not metric_b:
-                logger.debug(f"Metrics not yet available for both sides of A/B test: '{test.experiment_name}'")
-                continue
-                
-            winner_id = None
-            if test.variable_type == "thumbnail_style":
-                # For thumbnails, CTR is the key metric
-                winner_id = test.video_id_a if metric_a.ctr >= metric_b.ctr else test.video_id_b
-                winner_ctr = max(metric_a.ctr, metric_b.ctr)
-                winner_style = "Mosque Gold" if winner_id == test.video_id_a else "Open Quran"
-                set_setting("default_thumbnail_template", winner_style)
-                logger.success(f"A/B Test Winner: Style default updated to '{winner_style}' (CTR: {winner_ctr:.1%})")
-            else:
-                score_a = metric_a.views * (1.0 + metric_a.engagement_rate)
-                score_b = metric_b.views * (1.0 + metric_b.engagement_rate)
-                winner_id = test.video_id_a if score_a >= score_b else test.video_id_b
-                
-                if test.variable_type == "reciter":
-                    winner_reciter = metric_a.reciter_key if winner_id == test.video_id_a else metric_b.reciter_key
-                    set_setting("default_reciter", winner_reciter)
-                    logger.success(f"A/B Test Winner: Default reciter updated to '{winner_reciter}'")
-            
-            test.winner_id = winner_id
-            test.status = "completed"
-            test.completed_at = datetime.datetime.utcnow()
-            
-            results.append({
-                "experiment": test.experiment_name,
-                "winner_video_id": winner_id,
-                "variable_type": test.variable_type
-            })
-            
-        if results:
-            session.commit()
-            
-        return results
-    finally:
-        session.close()
+    logger.warning("Automatic experiment promotion is unavailable pending real variant/exposure contracts.")
+    return []
 
 
 def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
@@ -944,7 +686,7 @@ def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
             return {"status": "no_videos", "message": "No uploaded videos found in history."}
             
         try:
-            service = get_authenticated_service()
+            service = get_authenticated_service(interactive=False)
         except Exception as e:
             logger.error(f"Failed to authenticate YouTube service for stats: {e}")
             return {"status": "auth_error", "message": str(e)}
@@ -975,13 +717,14 @@ def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
                     # Preserve private retention / CTR from database if they already exist
                     from database.models import VideoAnalytics
                     existing_analytics = session.query(VideoAnalytics).filter_by(video_id=vid_id).first()
-                    retention = existing_analytics.retention_rate if existing_analytics else 0.50
-                    ctr = existing_analytics.ctr if existing_analytics else 0.05
+                    private_verified = bool(existing_analytics and existing_analytics.private_metrics_verified)
+                    retention = existing_analytics.retention_rate if private_verified else None
+                    ctr = existing_analytics.ctr if private_verified else None
                     
                     # Per-video, so one unusable row cannot discard the
                     # statistics for the other 49 videos in this chunk.
                     try:
-                        ingest_video_analytics(
+                        result = ingest_video_analytics(
                             video_id=vid_id,
                             views=views,
                             likes=likes,
@@ -990,9 +733,13 @@ def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
                             ctr=ctr,
                             surah=meta["surah"],
                             reciter_key=meta["reciter_key"],
-                            video_type=meta["video_type"]
+                            video_type=meta["video_type"],
+                            metrics_source="youtube_public", private_metrics_verified=private_verified,
                         )
-                        ingested_count += 1
+                        if result.get("status") == "success":
+                            ingested_count += 1
+                        else:
+                            errors.append(f"{vid_id}: ingestion did not succeed")
                     except Exception as e:
                         logger.error(f"Could not ingest metrics for {vid_id}: {e}")
                         errors.append(f"{vid_id}: {e}")
@@ -1001,7 +748,7 @@ def auto_ingest_youtube_public_metrics() -> Dict[str, Any]:
                 errors.append(str(e))
                 
         return {
-            "status": "success",
+            "status": "partial" if errors and ingested_count else "failed" if errors else "success",
             "ingested_count": ingested_count,
             "errors": errors
         }

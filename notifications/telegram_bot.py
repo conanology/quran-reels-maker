@@ -4,6 +4,7 @@ Telegram Bot - Notification and Approval System
 import os
 import time
 import requests
+import secrets
 from pathlib import Path
 from typing import Optional, Dict, Any
 from loguru import logger
@@ -44,10 +45,10 @@ def send_message(text: str, reply_markup: Optional[Dict] = None) -> Optional[Dic
         if response.status_code == 200:
             return response.json()
         else:
-            logger.error(f"Telegram send failed: {response.text}")
+            logger.error(f"Telegram send failed: HTTP {response.status_code}")
             return None
     except Exception as e:
-        logger.error(f"Telegram error: {e}")
+        logger.error(f"Telegram request failed: {type(e).__name__}")
         return None
 
 
@@ -56,7 +57,8 @@ def send_video(video_path: Path, caption: str, reply_markup: Optional[Dict] = No
     if not is_configured():
         logger.warning("Telegram not configured. Skipping video notification.")
         return None
-    
+
+
     url = f"{TELEGRAM_API}/sendVideo"
     
     try:
@@ -77,10 +79,24 @@ def send_video(video_path: Path, caption: str, reply_markup: Optional[Dict] = No
             if response.status_code == 200:
                 return response.json()
             else:
-                logger.error(f"Telegram video send failed: {response.text}")
+                logger.error(f"Telegram video send failed: HTTP {response.status_code}")
                 return None
     except Exception as e:
-        logger.error(f"Telegram video error: {e}")
+        logger.error(f"Telegram video request failed: {type(e).__name__}")
+        return None
+
+
+def send_photo(photo_path: Path, caption: str = '') -> Optional[Dict]:
+    """Deliver the exact proposed thumbnail for the bound final package review."""
+    if not is_configured():
+        return None
+    try:
+        with Path(photo_path).open('rb') as source:
+            response=requests.post(f'{TELEGRAM_API}/sendPhoto',
+                data={'chat_id':TELEGRAM_CHAT_ID,'caption':caption},files={'photo':source},timeout=30)
+        return response.json() if response.status_code==200 else None
+    except Exception as error:
+        logger.error(f'Thumbnail review delivery failed: {type(error).__name__}')
         return None
 
 
@@ -135,11 +151,12 @@ def get_updates(offset: Optional[int] = None) -> list:
             return data.get('result', [])
         return []
     except Exception as e:
-        logger.error(f"Telegram getUpdates error: {e}")
+        logger.error(f"Telegram updates request failed: {type(e).__name__}")
         return []
 
 
-def wait_for_approval(timeout_seconds: int = None) -> str:
+def wait_for_approval(timeout_seconds: int = None, *, request_message_id=None,
+                      nonce=None, package_hash=None, job_id=None, initial_offset=None) -> str:
     """
     Wait for user approval response.
     
@@ -148,26 +165,20 @@ def wait_for_approval(timeout_seconds: int = None) -> str:
         'rejected' - User rejected
         'regenerate' - User wants regeneration
         'timeout' - No response within timeout
-        'skip' - Telegram not configured (auto-approve)
+        'unavailable' - required review configuration is missing
     """
     if not is_configured():
-        logger.info("Telegram not configured. Auto-approving.")
-        return 'skip'
+        return 'unavailable'
     
-    if not APPROVAL_REQUIRED:
-        logger.info("Approval not required. Auto-approving.")
-        return 'approved'
+    approver_id = os.getenv('TELEGRAM_APPROVER_ID', '')
+    if not all((approver_id, request_message_id, nonce, package_hash, job_id)):
+        return 'unavailable'
     
     timeout = timeout_seconds or APPROVAL_TIMEOUT_SECONDS
     start_time = time.time()
-    last_update_id = None
+    last_update_id = initial_offset
     
     logger.info(f"Waiting for approval (timeout: {timeout}s)...")
-    
-    # First, clear any old updates
-    updates = get_updates()
-    if updates:
-        last_update_id = updates[-1]['update_id'] + 1
     
     while (time.time() - start_time) < timeout:
         updates = get_updates(offset=last_update_id)
@@ -183,27 +194,37 @@ def wait_for_approval(timeout_seconds: int = None) -> str:
             # Only accept from configured chat
             if chat_id != TELEGRAM_CHAT_ID:
                 continue
+            if str(message.get('from', {}).get('id', '')) != approver_id:
+                continue
+            if str(message.get('reply_to_message', {}).get('message_id', '')) != str(request_message_id):
+                continue
+            # Require explicit nonce plus package hash. An old "ok" must never
+            # authorize another video or concurrent job.
+            pieces = text.split()
+            if len(pieces) != 3 or not secrets.compare_digest(pieces[1], nonce.lower()) or not secrets.compare_digest(pieces[2], package_hash.lower()):
+                continue
+            text = pieces[0]
             
             if text in ['approve', 'yes', '✅', 'ok', 'نعم', 'موافق']:
                 logger.info("User approved the video")
-                send_message("✅ <b>Approved!</b> Uploading to YouTube...")
+                send_message("✅ <b>Approved.</b> The reviewed platform operation may now proceed.")
                 return 'approved'
             
             elif text in ['reject', 'no', '❌', 'delete', 'لا', 'رفض']:
                 logger.info("User rejected the video")
-                send_message("❌ <b>Rejected.</b> Video will be deleted.")
+                send_message("❌ <b>Rejected.</b> Publication stopped; local media retained.")
                 return 'rejected'
             
             elif text in ['regenerate', 'retry', 'again', '🔄', 'اعادة']:
                 logger.info("User requested regeneration")
-                send_message("🔄 <b>Regenerating...</b> New background and reciter will be selected.")
+                send_message("🔄 <b>Regeneration requested.</b> The same reserved verses and reciter will be reviewed again.")
                 return 'regenerate'
         
         # Wait a bit before checking again
         time.sleep(2)
     
     logger.warning("Approval timeout reached")
-    send_message("⏰ <b>Timeout!</b> No response received. Video will NOT be uploaded.")
+    send_message("⏰ <b>Timeout.</b> No publication was authorized.")
     return 'timeout'
 
 

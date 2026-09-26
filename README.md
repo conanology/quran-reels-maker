@@ -1,204 +1,78 @@
-# 🕌 Quran Reels Maker
+# Quran Reels Maker
 
-Automated Quran short video generator for YouTube Shorts. Generates beautiful vertical (9:16) videos with Quranic recitations and text overlays, then automatically uploads them to YouTube.
+Generate Quran recitation videos locally, review the final content, and publish through explicit YouTube/TikTok routes. Arabic Shorts use browser-shaped word highlights for mapped reciters; longform generation requires complete requested verse coverage. The separate [local web compiler](quran_compiler/README.md) reviews and joins existing clips and has no publishing endpoint.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
+## Install and generate
 
-## ✨ Features
+Use Python 3.11+ with FFmpeg/FFprobe on PATH. Python 3.14 on Windows is locally verified; the workflows include a clean Python 3.11/Linux regression gate. Use the project interpreter explicitly if another application's Python is on PATH.
 
-- **🎬 Automated Video Generation** - Creates vertical 9:16 videos perfect for YouTube Shorts
-- **📖 Sequential Quran Journey** - Automatically progresses through the entire Quran
-- **🎙️ Multiple Reciters** - Support for 11+ world-famous reciters
-- **📤 YouTube Auto-Upload** - Direct upload to YouTube with SEO-optimized metadata
-- **🔄 Smart Scheduling** - Never repeat verses, track progress through the Quran
-- **🎨 Beautiful Design** - Arabic text with proper Tashkeel on nature backgrounds
-
-## 🚀 Quick Start
-
-### 1. Installation
-
-```bash
-# Clone or download the project
-cd QuranReelsMaker
-
-# Create virtual environment
+```powershell
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
-
-# Install dependencies
-pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m playwright install chromium
+.\venv\Scripts\python.exe main.py generate --surah 112 --start 1 --end 4 --reciter alafasy
 ```
 
-### 2. Add Background Videos
+For Linux, use `venv/bin/python` and `python -m playwright install --with-deps chromium`. Add reviewed nature backgrounds to `assets/backgrounds/`. Bundled fonts are used; the active style selects its font. Record source/creator/license review with each asset rather than treating a download as rights clearance. Missing backgrounds/fonts, expected timing failures, overlong first verses and incomplete longform coverage stop generation visibly.
 
-Add some nature/landscape videos to the `assets/backgrounds/` folder:
-- MP4 format recommended
-- Any resolution (will be auto-cropped to 9:16)
-- 10-60 second clips work best
+Copy `.env.example` to `.env` for local configuration. Default reciter is alafasy, CPU encoder is libx264, Shorts target is 59 seconds (a product default, configurable up to 180). `VIDEO_ENCODER=h264_nvenc` is explicit; `_detect_encoder()` provides a real runtime probe for integrations instead of trusting advertised encoders. Imports do not create output directories, database tables or log files.
 
-### 3. Add Arabic Font
+Generated files have a `.manifest.json` sidecar with verified stream durations, exact verse/recording coverage, reciter, audio/video checksums, background provenance and content-review requirements. Do not distribute or publish a failed/partial artifact merely because an MP4 exists. Actual recording identity, Uthmani marks, basmala boundaries and pronunciation require a qualified visual/listening review. No automated test certifies those domain properties.
 
-Download an Arabic font and place it in `assets/fonts/`:
-- Recommended: Dubai Bold, Amiri, or any Quran-compatible font
-- Name it `DUBAI-BOLD.TTF` or update `config/settings.py`
+## Commands and publication policy
 
-### 4. Generate Your First Reel
+| Command | Behavior |
+| --- | --- |
+| `generate --surah 112 --start 1 --end 4 --reciter alafasy` | Generate local content; does not advance published progress. |
+| `generate --dry-run` | Read-only illustrative selection, no rendering or store changes. |
+| `auto --test` | Generate only; no review messages or platform uploads. |
+| `auto --dry-run` | No generation, account calls or state changes. |
+| `auto` / `batch` | Reserve content, review final package and publish; one automatic job at a time. |
+| `upload <path> --privacy private` | Explicit manual upload; this is an external mutation, separate from test mode. |
+| `tiktok <path> --surah 112 --start 1 --end 4 --reciter alafasy` | Explicit manual TikTok route; valid attribution required. |
+| `longform compile --surah 112 --reciter alafasy` | Local complete-coverage compilation. |
+| `longform auto --test` | Preview mode skips automatic generation and publication; use `longform compile` for local rendering. |
+| `longform auto` | Reserve/review/publish the next complete group. |
+| `growth-engine run --slot morning_short --dry-run` | Illustrative decision without settings/auth/analytics writes. |
+| `growth-engine run-feedback` | Advisory observations; no automatic penalties or fabricated metric-driven selection. |
+| `status`, `history`, `longform status` | Inspect local progression and receipts/history. |
+| `set-position 36 1` | Explicitly reconcile/reset the published journey after reviewing previous coverage. |
+| `setup-youtube`, `setup-tiktok` | Explicit interactive authorization; automatic routes cannot silently start OAuth. |
 
-```bash
-# Generate next verses (auto-selected)
-python main.py generate
+Automatic publishing always requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_APPROVER_ID` and `YOUTUBE_EXPECTED_CHANNEL_ID`. Set `TIKTOK_EXPECTED_OPEN_ID` before separately enabling `ENABLE_TIKTOK_AUTOPUBLISH=true`. Missing configuration, failed delivery, wrong account, rejected/expired approval or changed media/metadata/thumbnail stops transfer. `APPROVAL_REQUIRED=false` cannot bypass this boundary. Approval replies must target the specific video and include its nonce and package hash. Legacy cookie/browser TikTok posting is disabled because it cannot verify privacy/account/completion.
 
-# Generate specific surah
-python main.py generate --surah 112
+Test mode never uploads privately or publicly. A manual private upload remains a real platform mutation. Transfers, processing completion and public publication are distinct outcomes. YouTube/TikTok account processing is polled with bounded deadlines; durable transfer attempts/receipts prevent blind retransfers after a crash. A timeout is an unresolved outcome, not permission to post again.
 
-# Check status
-python main.py status
+Only confirmed public sequential publication advances the journey. Friday/thematic selections have separate reservations. Existing progress from the old generation-based model requires explicit reconciliation; it is not evidence of published coverage. Schema migration backs up legacy state and does not choose/delete competing cursors.
+
+AI metadata is disabled by default (`ENABLE_AI_METADATA=false`). Enabled output is a bounded suggestion requiring final review; canonical Quran text/translation attribution is authoritative. Unavailable CTR/retention stays null. Automatic experiment promotion, synthetic A/B variants and the incomplete sleep/weekly/documentary formats are unavailable until their content/exposure contracts are implemented. See [documentary status](documentary/README.md). Thumbnail generation logic is retained for the next separately requested refactor; final thumbnail bytes participate in approval.
+
+## Scheduling and recovery
+
+Workflows share one concurrency group and use typed inputs/environment values as literal arguments. They do not commit/rebase/push binary SQLite state. Morning is 05:00–07:00 Asia/Riyadh; evening is 21:00–23:00 except Friday, when the complete longform slot uses that window. Sleep automation is unavailable. Late/outside-window runs skip rather than publish a different format; Cairo daylight saving is not a fixed UTC+2 assumption.
+
+Repository variable `AUTOMATED_PUBLISHING_ENABLED=true` is an operational enablement gate after domain, account and state review. Actual workflow publication is restricted to the repository default branch; previews remain available on other branches. Configure review secrets/expected channel and reviewed initial state before enablement. A first checkpoint allows `QRM_ALLOW_STATE_BOOTSTRAP=true` only when prior workflow history proves no publication attempt; remove that allowance after the first successful checkpoint. Earlier/unknown publication history requires deliberate checkpoint recovery. Missing/expired/corrupt state or later publishing activity without its expected checkpoint blocks publication. Automated reruns also require explicit remote/state reconciliation.
+
+Authoritative state is uploaded as the `qrm-publishing-state` run artifact, including SQLite, background history, transfer attempts and receipts, with checksum validation on restore. Retention is 90 days, so archive an independent backup before expiry; this is not indefinite storage. Media/recovery evidence is retained separately for 14 days. A failed transfer retains job files and receipts instead of cleaning them before recovery. Artifact upload failure also blocks later runs from silently using stale state.
+
+To recover, stop automatic jobs, preserve the last checkpoint plus failed-run media/attempts/receipts, verify actual platform processing/privacy/account outcomes, and reconcile local history/cursor against confirmed remote IDs. Do not delete an uncertain transfer marker or reserve new sequential content until that remote outcome is known. `set-position` is a deliberate cursor action, not remote receipt reconciliation. Re-enable scheduling only after recovered state has a new valid checkpoint. No automatic workflow was run or enabled during remediation.
+
+`QRM_OUTPUTS_DIR`, `QRM_DATABASE_DIR`, `QRM_DATABASE_PATH`, `QRM_ASSETS_DIR` and `QRM_LOG_FILE` allow isolated storage. Background downloads are atomic, probed and limited to 256 MiB/ten minutes; each cache admits at most 20 new assets and never automatically evicts files another render may use. Archive inactive assets deliberately with jobs stopped. Logs and credentials must remain private; no token files are included in run artifacts or Git.
+
+## Verification and documentation
+
+Install the separate web/test dependencies to run the whole suite:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r quran_compiler/backend/requirements.txt
+.\venv\Scripts\python.exe -B scripts/checks.py tests
 ```
 
-## 🎥 YouTube Upload Setup
+The remediation runner copies current source/fonts/frontend/workflows into a sandbox, disables dotenv/live secrets, blocks external network calls, uses disposable state, and checks the production database hash. Real Chromium and tiny FFmpeg media checks are included. Legacy root manual test scripts are inert; broad test discovery cannot delete production tables or start live AI/upload calls. CI runs isolated tests before restoring credentials.
 
-### 1. Create Google Cloud Project
+- [Historical audit](docs/audit-report.md)
+- [Remediation decisions](docs/remediation-decisions.md)
+- [Remediation implementation status](docs/remediation-status.md)
+- [YouTube account setup](docs/youtube_setup_guide.md)
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project
-3. Enable **YouTube Data API v3**
-4. Go to Credentials → Create Credentials → OAuth Client ID
-5. Choose "Desktop app"
-6. Download the JSON and save as `client_secrets.json` in project root
-
-### 2. Authenticate
-
-```bash
-python main.py setup-youtube
-```
-
-A browser will open for you to authorize the application.
-
-### 3. Auto-Generate and Upload
-
-```bash
-# Generate and upload (public)
-python main.py auto
-
-# Generate and upload as private (for testing)
-python main.py auto --test
-```
-
-## 📋 Commands
-
-| Command | Description |
-|---------|-------------|
-| `python main.py generate` | Generate next reel in sequence |
-| `python main.py generate --surah 1` | Generate specific surah |
-| `python main.py generate --verses 5` | Set verses per reel |
-| `python main.py upload <path>` | Upload existing video |
-| `python main.py auto` | Generate AND upload |
-| `python main.py auto --test` | Upload as private |
-| `python main.py status` | Show progress & stats |
-| `python main.py history` | Show recent reels |
-| `python main.py set-position 36 1` | Jump to Surah 36, Ayah 1 |
-| `python main.py setup-youtube` | Configure YouTube auth |
-
-## ⏰ Scheduled Automation
-
-### Windows Task Scheduler
-
-1. Open Task Scheduler
-2. Create Basic Task → Name: "Quran Daily Reel"
-3. Trigger: Daily at your preferred time
-4. Action: Start a program
-   - Program: `python`
-   - Arguments: `main.py auto`
-   - Start in: `D:\05_Work\QuranReelsMaker`
-
-### Linux Cron
-
-```bash
-# Edit crontab
-crontab -e
-
-# Add this line (runs daily at 6 AM)
-0 6 * * * cd /path/to/QuranReelsMaker && python main.py auto
-```
-
-## 🎙️ Available Reciters
-
-| Key | Reciter |
-|-----|---------|
-| `alafasy` | Mishary Alafasy (default) |
-| `sudais` | Abdurrahman As-Sudais |
-| `maher_muaiqly` | Maher Al-Muaiqly |
-| `abdul_basit_mujawwad` | Abdul Basit (Mujawwad) |
-| `abdul_basit_murattal` | Abdul Basit (Murattal) |
-| `husary` | Mahmoud Al-Husary |
-| `minshawi_mujawwad` | Minshawi (Mujawwad) |
-| `shuraym` | Saud Ash-Shuraym |
-| `hudhaify` | Ali Al-Hudhaify |
-| `shaatree` | Abu Bakr Ash-Shaatree |
-| `banna` | Mahmoud Ali Al-Banna |
-
-```bash
-# Use specific reciter
-python main.py generate --reciter sudais
-```
-
-## 📁 Project Structure
-
-```
-QuranReelsMaker/
-├── config/
-│   └── settings.py          # All configuration
-├── core/
-│   ├── quran_api.py          # Fetch Quran text
-│   ├── audio_processor.py    # Download & process audio
-│   ├── video_generator.py    # Create videos with MoviePy
-│   └── verse_scheduler.py    # Track progress
-├── youtube/
-│   ├── auth.py               # OAuth2 authentication
-│   └── uploader.py           # YouTube upload
-├── database/
-│   └── models.py             # SQLite models
-├── assets/
-│   ├── fonts/                # Arabic fonts
-│   └── backgrounds/          # Nature videos
-├── outputs/
-│   ├── videos/               # Generated reels
-│   └── audio/                # Temp audio
-├── main.py                   # CLI entry point
-└── requirements.txt
-```
-
-## ⚙️ Configuration
-
-Edit `config/settings.py` to customize:
-
-- Video dimensions and FPS
-- Font sizes and colors
-- Default reciter
-- Verses per reel
-- YouTube metadata templates
-
-## 📊 API Quota
-
-YouTube Data API has a daily quota:
-- Default: 10,000 units/day
-- Video upload: 1,600 units
-- Maximum ~6 uploads/day
-
-For 1 daily reel, the default quota is sufficient.
-
-## 🤝 Credits
-
-- Quran Text API: [alquran.cloud](https://alquran.cloud/)
-- Audio: [everyayah.com](https://everyayah.com/)
-- Inspired by: [Arabianaischool/Quran-Reels-Generator](https://github.com/Arabianaischool/Quran-Reels-Generator)
-
-## 📜 License
-
-MIT License - See LICENSE file
-
----
-
-⚠️ **Disclaimer**: This project is for educational purposes. All Quran recitations belong to their respective owners. Please ensure your use complies with Islamic guidelines and YouTube's terms of service.
+Platform quota, processing and Shorts eligibility depend on the current account/project and official rules. Consult [YouTube upload reference](https://developers.google.com/youtube/v3/docs/videos/insert), [processing status](https://developers.google.com/youtube/v3/guides/implementation/videos), [Shorts guidance](https://support.google.com/youtube/answer/15424877) and [TikTok posting status](https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status). Local title scores are heuristics, not measured vidIQ scores or a promise of reach.

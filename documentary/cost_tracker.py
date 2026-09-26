@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import math
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,8 +50,11 @@ class _EpisodeCostState:
 
 
 class APICostTracker:
-    def __init__(self) -> None:
-        self._enabled = bool(DOCUMENTARY_COST_TRACKING_ENABLED)
+    def __init__(self, *, enabled: bool | None = None, budget_usd: float | None = None) -> None:
+        self._enabled = bool(DOCUMENTARY_COST_TRACKING_ENABLED if enabled is None else enabled)
+        if budget_usd is not None and (not math.isfinite(budget_usd) or budget_usd < 0):
+            raise ValueError("Cost budget must be a finite nonnegative value.")
+        self._budget_usd = budget_usd
         self._lock = threading.Lock()
         self._state: _EpisodeCostState | None = None
 
@@ -61,6 +66,8 @@ class APICostTracker:
         if not self._enabled:
             return
         with self._lock:
+            if self._state is not None and self._state.status == "running":
+                raise RuntimeError("Finalize the current episode before starting another; use a tracker per concurrent episode.")
             self._state = _EpisodeCostState(
                 episode_dir=Path(episode_dir),
                 episode_number=episode_number,
@@ -81,11 +88,26 @@ class APICostTracker:
         cache_hit: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        if estimated_cost_usd is not None and (not math.isfinite(estimated_cost_usd) or estimated_cost_usd < 0):
+            raise ValueError("Estimated cost must be finite and nonnegative.")
+        if duration_seconds is not None and (not math.isfinite(duration_seconds) or duration_seconds < 0):
+            raise ValueError("Duration must be finite and nonnegative.")
+        for value in (units or {}).values():
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("Usage units must be finite nonnegative numbers.")
         if not self._enabled:
             return
         with self._lock:
             if self._state is None:
                 return
+            if self._state.status != "running":
+                raise RuntimeError("Cannot add costs to a finalized episode.")
+            if self._budget_usd is not None and not cache_hit:
+                if estimated_cost_usd is None:
+                    raise RuntimeError("Budgeted events require an explicit estimate before paid work.")
+                known = sum(float(e.get("estimated_cost_usd") or 0) for e in self._state.events)
+                if known + estimated_cost_usd > self._budget_usd:
+                    raise RuntimeError("Documentary cost budget would be exceeded.")
             event = {
                 "timestamp_utc": _now_iso(),
                 "category": category,
@@ -134,6 +156,7 @@ class APICostTracker:
             "estimated_cost_usd": 0.0,
             "api_calls": 0,
             "cache_hits": 0,
+            "unpriced_calls": 0,
             "by_category": {},
             "usage": {
                 "text_prompt_tokens": 0,
@@ -146,13 +169,21 @@ class APICostTracker:
             },
         }
         for ev in events:
-            totals["api_calls"] += 1
             if ev.get("cache_hit"):
                 totals["cache_hits"] += 1
+            else:
+                totals["api_calls"] += 1
+                if ev.get("estimated_cost_usd") is None:
+                    totals["unpriced_calls"] += 1
             totals["estimated_cost_usd"] += float(ev.get("estimated_cost_usd") or 0.0)
             cat = str(ev.get("category") or "unknown")
-            by_cat = totals["by_category"].setdefault(cat, {"calls": 0, "estimated_cost_usd": 0.0})
-            by_cat["calls"] += 1
+            by_cat = totals["by_category"].setdefault(cat, {"api_calls": 0, "cache_hits": 0, "unpriced_calls": 0, "estimated_cost_usd": 0.0})
+            if ev.get("cache_hit"):
+                by_cat["cache_hits"] += 1
+            else:
+                by_cat["api_calls"] += 1
+                if ev.get("estimated_cost_usd") is None:
+                    by_cat["unpriced_calls"] += 1
             by_cat["estimated_cost_usd"] += float(ev.get("estimated_cost_usd") or 0.0)
 
             units = ev.get("units") or {}
@@ -166,9 +197,11 @@ class APICostTracker:
             usage["video_returned_clips"] += int(units.get("returned_clips") or 0)
 
         totals["estimated_cost_usd"] = round(totals["estimated_cost_usd"], 8)
+        if totals["unpriced_calls"]:
+            totals["estimated_cost_usd"] = None
         totals["usage"]["video_requested_seconds"] = round(totals["usage"]["video_requested_seconds"], 3)
         for cat_vals in totals["by_category"].values():
-            cat_vals["estimated_cost_usd"] = round(cat_vals["estimated_cost_usd"], 8)
+            cat_vals["estimated_cost_usd"] = None if cat_vals["unpriced_calls"] else round(cat_vals["estimated_cost_usd"], 8)
         return totals
 
     def _report_dict_locked(self) -> dict[str, Any]:
@@ -177,7 +210,7 @@ class APICostTracker:
         return {
             "generated_at_utc": _now_iso(),
             "tracking_enabled": self._enabled,
-            "pricing_mode": "estimated_from_configured_rates",
+            "pricing_mode": "explicit_event_estimates_or_unknown",
             "pricing_rates_usd": {
                 "text_input_per_1m_tokens": DOCUMENTARY_COST_TEXT_INPUT_PER_1M_TOKENS,
                 "text_output_per_1m_tokens": DOCUMENTARY_COST_TEXT_OUTPUT_PER_1M_TOKENS,
@@ -203,11 +236,15 @@ class APICostTracker:
         self._state.episode_dir.mkdir(parents=True, exist_ok=True)
         path = self._state.episode_dir / "api_cost_report.json"
         try:
-            path.write_text(
+            temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+            temporary.write_text(
                 json.dumps(self._report_dict_locked(), indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            os.replace(temporary, path)
         except Exception as exc:
+            if "temporary" in locals():
+                temporary.unlink(missing_ok=True)
             logger.warning("Could not write api_cost_report.json: %s", exc)
             return None
         return path
@@ -221,4 +258,3 @@ def get_cost_tracker() -> APICostTracker:
     if _TRACKER is None:
         _TRACKER = APICostTracker()
     return _TRACKER
-

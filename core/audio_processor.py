@@ -2,6 +2,11 @@
 Audio Processor - Audio quality enhancements and ambient mixing
 """
 import math
+import hashlib
+import tempfile
+import json
+import time
+from urllib.parse import urljoin, urlparse
 import os
 import random
 import shutil
@@ -15,6 +20,62 @@ from requests.exceptions import RequestException
 
 from core.utils import retry_with_backoff
 from config.settings import ASSETS_DIR, AUDIO_DIR
+
+
+class AudioProcessingError(RuntimeError):
+    pass
+
+
+def normalize_recording_url(url: str) -> str:
+    """Resolve Quran.com recording paths while restricting download origins."""
+    if not isinstance(url, str) or not url.strip():
+        raise AudioProcessingError("Audio recording URL is missing")
+    resolved = urljoin("https://verses.quran.com/", url)
+    parsed = urlparse(resolved)
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.hostname not in {
+        "verses.quran.com", "audio.qurancdn.com", "download.quranicaudio.com", "everyayah.com"
+    }:
+        raise AudioProcessingError("Unexpected Quran recording download origin")
+    return resolved
+
+
+def _download_recording(url: str, output_path: Path) -> Path:
+    """Bounded, atomic download. Incomplete bytes never become a cache hit."""
+    from core.runtime_safety import exclusive_lock, atomic_write_json
+    from core.utils import file_sha256
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path = Path(str(output_path) + ".source.json")
+    with exclusive_lock(Path(str(output_path) + ".lock")):
+        if output_path.is_file() and source_path.is_file():
+            try:
+                source = json.loads(source_path.read_text(encoding="utf-8"))
+                if source.get("recording_url") == url and source.get("sha256") == file_sha256(output_path):
+                    get_audio_duration(output_path)
+                    return output_path
+            except (OSError, ValueError, AudioProcessingError):
+                pass
+        fd, partial = tempfile.mkstemp(prefix="recording_", suffix=".part", dir=output_path.parent)
+        try:
+            total = 0
+            deadline = time.monotonic() + 120
+            with os.fdopen(fd, "wb") as destination, requests.get(url, stream=True, timeout=(10, 60)) as response:
+                response.raise_for_status()
+                normalize_recording_url(response.url)
+                for chunk in response.iter_content(chunk_size=65536):
+                    total += len(chunk)
+                    if total > 64 * 1024 * 1024 or time.monotonic() > deadline:
+                        raise AudioProcessingError("Ayah recording exceeded download size/time limit")
+                    destination.write(chunk)
+                destination.flush()
+                os.fsync(destination.fileno())
+            if not total:
+                raise AudioProcessingError("Downloaded audio is empty")
+            duration = get_audio_duration(Path(partial))
+            os.replace(partial, output_path)
+            atomic_write_json(source_path, {"recording_url": url, "sha256": file_sha256(output_path), "duration_seconds": duration})
+            return output_path
+        finally:
+            Path(partial).unlink(missing_ok=True)
 
 # Configure FFmpeg for pydub on Windows
 def _find_ffmpeg():
@@ -119,7 +180,7 @@ def amplitude_ratio_to_db(ratio: float) -> float:
     return 20.0 * math.log10(ratio)
 
 
-def get_ambient_sound(duration: float) -> Optional[Path]:
+def get_ambient_sound(duration: float, output_dir: Optional[Path] = None) -> Optional[Path]:
     """
     Get an ambient sound file, trimmed/looped to match duration.
     
@@ -146,6 +207,8 @@ def get_ambient_sound(duration: float) -> Optional[Path]:
     
     try:
         ambient = AudioSegment.from_file(str(ambient_path))
+        if len(ambient) <= 0:
+            raise AudioProcessingError("Ambient sound is empty")
         
         # Convert duration to milliseconds
         target_ms = int(duration * 1000)
@@ -164,7 +227,11 @@ def get_ambient_sound(duration: float) -> Optional[Path]:
         ambient = ambient.fade_in(2000).fade_out(2000)
         
         # Export to temp file
-        output_path = AUDIO_DIR / f"ambient_mix_{random.randint(1000, 9999)}.mp3"
+        destination = output_dir or AUDIO_DIR
+        destination.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="ambient_", suffix=".mp3", dir=destination)
+        os.close(fd)
+        output_path = Path(name)
         ambient.export(str(output_path), format="mp3")
         
         logger.info(f"Created ambient track: {output_path.name}")
@@ -248,8 +315,9 @@ def download_ayah_audio(reciter_key: str, surah: int, ayah: int, output_dir: Pat
     Returns:
         Path to the downloaded audio file
     """
-    reciter_info = RECITERS.get(reciter_key, {})
-    reciter_id = reciter_info.get("id", "Alafasy_64kbps")
+    if reciter_key not in RECITERS:
+        raise AudioProcessingError(f"Unknown reciter: {reciter_key}")
+    reciter_id = RECITERS[reciter_key]["id"]
     
     # Build URL
     url = QURAN_AUDIO_BASE.format(reciter=reciter_id, surah=surah, ayah=ayah)
@@ -258,24 +326,7 @@ def download_ayah_audio(reciter_key: str, surah: int, ayah: int, output_dir: Pat
     filename = f"ayah_{reciter_key}_{surah:03d}_{ayah:03d}.mp3"
     output_path = output_dir / filename
     
-    # Check if already exists (for THIS reciter)
-    if output_path.exists():
-        return output_path
-    
-    logger.info(f"Downloading audio: {surah}:{ayah} ({reciter_key})")
-    
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        
-        with open(output_path, 'wb') as f:
-            f.write(response.content)
-        
-        return output_path
-        
-    except RequestException as e:
-        logger.error(f"Failed to download audio: {e}")
-        raise
+    return _download_recording(normalize_recording_url(url), output_path)
 
 
 def trim_silence(audio_path: Path) -> Path:
@@ -327,38 +378,17 @@ def download_and_process_ayah(reciter_key: str, surah: int, ayah: int, output_di
     Returns:
         Path to processed audio file
     """
-    # Download
+    if reciter_key not in RECITERS:
+        raise AudioProcessingError(f"Unknown reciter: {reciter_key}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve the downloaded recording's time origin and sample content.
     if audio_url:
-        # If standard URL is provided, download directly
-        filename = f"{surah:03d}{ayah:03d}.mp3"
-        audio_path = output_dir / filename
-        
-        if not audio_path.exists():
-            import requests
-            try:
-                logger.info(f"Downloading from V4 URL: {audio_url}")
-                response = requests.get(audio_url, timeout=30)
-                response.raise_for_status()
-                with open(audio_path, 'wb') as f:
-                    f.write(response.content)
-            except Exception as e:
-                logger.error(f"Failed to download audio URL: {e}")
-                raise
-        
-        # When using V4 audio with timestamps, we usually DO NOT want to trim silence
-        # because the timestamps are relative to the original file.
-        # Trimming would shift the audio and break sync.
-        # So we skip trim_silence() here.
-        
+        url = normalize_recording_url(audio_url)
+        source_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        filename = f"ayah_{reciter_key}_{surah:03d}_{ayah:03d}_{source_hash}.mp3"
+        audio_path = _download_recording(url, output_dir / filename)
     else:
-        # Fallback to EveryAyah logic
         audio_path = download_ayah_audio(reciter_key, surah, ayah, output_dir)
-        # Trim silence only for legacy/EveryAyah source
-        audio_path = trim_silence(audio_path)
-    
-    # Normalize volume (safe to do, doesn't change timing)
-    audio_path = normalize_audio(audio_path)
-    
     return audio_path
 
 
@@ -374,10 +404,13 @@ def get_audio_duration(audio_path: Path) -> float:
     """
     try:
         audio = AudioSegment.from_file(str(audio_path))
-        return len(audio) / 1000.0  # Convert ms to seconds
+        duration = len(audio) / 1000.0
+        if not math.isfinite(duration) or duration <= 0:
+            raise AudioProcessingError("Audio has no positive duration")
+        return duration
     except Exception as e:
         logger.error(f"Could not get duration for {audio_path}: {e}")
-        return 5.0  # Default fallback
+        raise AudioProcessingError(f"Could not measure downloaded audio: {audio_path.name}") from e
 
 
 def cleanup_audio_files(audio_dir: Path) -> None:

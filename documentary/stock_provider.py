@@ -13,15 +13,13 @@ import random
 import re
 import shutil
 import logging
+import json
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import requests
-
-from config.settings import ASSETS_DIR
-from core.person_detector import has_people
-
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
@@ -60,13 +58,50 @@ class StockAssetResult:
 
 
 class DocumentaryStockProvider:
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, *, cache_dir: Path | None = None):
         self.api_key = api_key or PEXELS_API_KEY
-        self.cache_dir = ASSETS_DIR / "documentary" / "stock_cache"
+        if cache_dir is None:
+            from config.settings import ASSETS_DIR
+            cache_dir = ASSETS_DIR / "documentary" / "stock_cache"
+        self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
         if self.api_key:
             self.session.headers.update({"Authorization": self.api_key})
+
+    def close(self):
+        self.session.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    @staticmethod
+    def _digest(path):
+        with open(path, "rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+
+    def _save_provenance(self, asset):
+        path = Path(asset.path)
+        payload = {"asset": asset.to_dict(), "sha256": self._digest(path)}
+        sidecar = path.with_suffix(path.suffix + ".source.json")
+        temporary = sidecar.with_suffix(sidecar.suffix + ".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, sidecar)
+
+    def _cached_asset(self, path):
+        path = Path(path)
+        try:
+            payload = json.loads(path.with_suffix(path.suffix + ".source.json").read_text(encoding="utf-8"))
+            data = payload["asset"]
+            if not data.get("source_url") or payload["sha256"] != self._digest(path):
+                return None
+            data["path"] = path
+            return StockAssetResult(**data)
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
 
     @property
     def enabled(self) -> bool:
@@ -85,8 +120,9 @@ class DocumentaryStockProvider:
             return None
 
         target_path = Path(target_path)
-        if target_path.exists() and target_path.stat().st_size > 1024:
-            return StockAssetResult(path=target_path, source_kind="cache")
+        cached = self._cached_asset(target_path)
+        if cached:
+            return cached
 
         queries = self._build_queries(shot_prompt, continuity_tags or [])
         for query in queries[:6]:
@@ -100,6 +136,7 @@ class DocumentaryStockProvider:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(downloaded.path, target_path)
                 downloaded.path = target_path
+                self._save_provenance(downloaded)
             return downloaded
         return None
 
@@ -116,8 +153,9 @@ class DocumentaryStockProvider:
             return None
 
         target_path = Path(target_path)
-        if target_path.exists() and target_path.stat().st_size > 1024:
-            return StockAssetResult(path=target_path, source_kind="cache")
+        cached = self._cached_asset(target_path)
+        if cached:
+            return cached
 
         queries = self._build_queries(shot_prompt, continuity_tags or [])
         for query in queries[:6]:
@@ -131,6 +169,7 @@ class DocumentaryStockProvider:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(downloaded.path, target_path)
                 downloaded.path = target_path
+                self._save_provenance(downloaded)
             return downloaded
         return None
 
@@ -302,43 +341,34 @@ class DocumentaryStockProvider:
             logger.info("Rejected Pexels video %s for query '%s': %s", pexels_id, query, ", ".join(screening.get("reasons", [])))
             return None
 
-        if cache_path.exists() and cache_path.stat().st_size > 1024:
-            return StockAssetResult(
-                path=cache_path,
-                source_kind="pexels_video",
-                provider_id=pexels_id,
-                source_url=video.get("url"),
-                creator=(video.get("user") or {}).get("name"),
-                query=query,
-                width=width,
-                height=height,
-                duration=float(video.get("duration", 0) or 0),
-                screening=screening,
-            )
+        cached = self._cached_asset(cache_path)
+        if cached:
+            return cached
 
         link = selected.get("link")
         if not link:
             return None
+        temporary = cache_path.with_suffix(".part.mp4")
         try:
             with requests.get(link, stream=True, timeout=30) as r:
                 r.raise_for_status()
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(cache_path, "wb") as f:
+                total = 0
+                with open(temporary, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         if chunk:
+                            total += len(chunk)
+                            if total > 256 * 1024 * 1024:
+                                raise ValueError("Stock video exceeds the download limit.")
                             f.write(chunk)
+            from documentary.quality_validator import validate_video_asset
+            if not validate_video_asset(temporary).ok:
+                raise ValueError("Stock video quality/screening is unverified.")
+            os.replace(temporary, cache_path)
         except Exception:
+            temporary.unlink(missing_ok=True)
             return None
-
-        # Best-effort people rejection
-        try:
-            if has_people(cache_path, num_frames=5):
-                cache_path.unlink(missing_ok=True)
-                return None
-        except Exception:
-            pass
-
-        return StockAssetResult(
+        asset = StockAssetResult(
             path=cache_path,
             source_kind="pexels_video",
             provider_id=pexels_id,
@@ -350,6 +380,8 @@ class DocumentaryStockProvider:
             duration=float(video.get("duration", 0) or 0),
             screening=screening,
         )
+        self._save_provenance(asset)
+        return asset
 
     def _download_image(self, photo: dict[str, Any], *, query: str, forbidden_visuals: list[str]) -> StockAssetResult | None:
         pexels_id = str(photo.get("id", "unknown"))
@@ -365,16 +397,28 @@ class DocumentaryStockProvider:
         width = int(photo.get("width", 0) or 0)
         height = int(photo.get("height", 0) or 0)
         cache_path = self.cache_dir / f"pexels_img_{pexels_id}_{width}x{height}.jpg"
-        if not (cache_path.exists() and cache_path.stat().st_size > 1024):
-            try:
-                r = requests.get(img_url, timeout=30)
+        cached = self._cached_asset(cache_path)
+        if cached:
+            return cached
+        temporary = cache_path.with_suffix(".part.jpg")
+        try:
+            total = 0
+            with requests.get(img_url, timeout=30, stream=True) as r:
                 r.raise_for_status()
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                cache_path.write_bytes(r.content)
-            except Exception:
-                return None
-
-        return StockAssetResult(
+                with open(temporary, "wb") as stream:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        total += len(chunk)
+                        if total > 32 * 1024 * 1024:
+                            raise ValueError("Stock image exceeds the download limit.")
+                        stream.write(chunk)
+            from documentary.quality_validator import validate_image_asset
+            if not validate_image_asset(temporary).ok:
+                raise ValueError("Stock image quality/screening is unverified.")
+            os.replace(temporary, cache_path)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            return None
+        asset = StockAssetResult(
             path=cache_path,
             source_kind="pexels_image",
             provider_id=pexels_id,
@@ -386,6 +430,8 @@ class DocumentaryStockProvider:
             duration=None,
             screening=screening,
         )
+        self._save_provenance(asset)
+        return asset
 
     @staticmethod
     def _aspect_ratio(item: dict[str, Any]) -> float:

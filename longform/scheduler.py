@@ -138,7 +138,7 @@ def get_already_compiled() -> set:
     session = get_db_session()
     try:
         records = session.query(LongformHistory).filter(
-            LongformHistory.status.in_(["compiled", "uploaded"])
+            LongformHistory.status == "uploaded"
         ).all()
         return {(r.surah_start, r.surah_end, r.ayah_start, r.ayah_end) for r in records}
     finally:

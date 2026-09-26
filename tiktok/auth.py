@@ -9,6 +9,7 @@ import http.server
 import socketserver
 import requests
 import webbrowser
+import secrets
 from pathlib import Path
 from typing import Optional, Dict, Any
 from loguru import logger
@@ -32,6 +33,13 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed_url.query)
         code = params.get('code')
+        state = params.get('state', [''])[0]
+        expected = getattr(self.server,'expected_state','')
+        if not expected or not secrets.compare_digest(state, expected):
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'Invalid authorization state')
+            return
         
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -65,7 +73,7 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(fail_html.encode('utf-8'))
 
 
-def run_callback_server(port: int = 8080) -> Optional[str]:
+def run_callback_server(port: int = 8080, *, expected_state: str, timeout: float = 60) -> Optional[str]:
     """Start a temporary server to receive the authorization code redirect."""
     # Custom TCPServer with allow_reuse_address set to True
     class ReuseAddrTCPServer(socketserver.TCPServer):
@@ -74,13 +82,17 @@ def run_callback_server(port: int = 8080) -> Optional[str]:
     try:
         server = ReuseAddrTCPServer(('127.0.0.1', port), CallbackHandler)
         server.auth_code = None
+        server.expected_state = expected_state
+        server.timeout = min(timeout,1)
         
         # Handle exactly one request (the redirect back from TikTok)
-        server.handle_request()
+        deadline=time.monotonic()+timeout
+        while server.auth_code is None and time.monotonic() < deadline:
+            server.handle_request()
         server.server_close()
         return server.auth_code
     except Exception as e:
-        logger.error(f"Failed to run OAuth callback server: {e}")
+        logger.error(f"Failed to run OAuth callback server: {type(e).__name__}")
         return None
 
 
@@ -95,8 +107,8 @@ def save_token_data(token_data: Dict[str, Any]) -> None:
     if 'refresh_expires_in' in token_data:
         token_data['refresh_expires_at'] = int(time.time()) + int(token_data['refresh_expires_in'])
         
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(token_data, f, indent=2)
+    from core.runtime_safety import atomic_write_json
+    atomic_write_json(path, token_data, private=True)
     logger.debug(f"Saved TikTok token details to {path.name}")
 
 
@@ -110,7 +122,7 @@ def load_token_data() -> Optional[Dict[str, Any]]:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        logger.warning(f"Failed to read TikTok token file: {e}")
+        logger.warning(f"Failed to read TikTok token file: {type(e).__name__}")
         return None
 
 
@@ -141,11 +153,11 @@ def refresh_access_token(refresh_token: str) -> Optional[Dict[str, Any]]:
                 logger.success("TikTok access token refreshed successfully.")
                 return data
             else:
-                logger.error(f"Unexpected token response structure: {data}")
+                logger.error(f"Unexpected token response structure: <redacted response>")
         else:
-            logger.error(f"Failed token refresh endpoint HTTP {response.status_code}: {response.text}")
+            logger.error(f"Failed token refresh endpoint HTTP {response.status_code}: <redacted response>")
     except Exception as e:
-        logger.error(f"Error during TikTok token refresh: {e}")
+        logger.error(f"Error during TikTok token refresh: {type(e).__name__}")
         
     return None
 
@@ -193,13 +205,15 @@ def authenticate_interactive() -> Optional[str]:
         
     redirect_uri = TIKTOK_REDIRECT_URI
     scope = "video.publish,video.upload"
+    oauth_state = secrets.token_urlsafe(32)
     
     # TikTok authorize URL
     auth_params = {
         "client_key": TIKTOK_CLIENT_KEY,
         "scope": scope,
         "response_type": "code",
-        "redirect_uri": redirect_uri
+        "redirect_uri": redirect_uri,
+        "state": oauth_state
     }
     auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urllib.parse.urlencode(auth_params)}"
     
@@ -223,15 +237,20 @@ def authenticate_interactive() -> Optional[str]:
             if "code=" in user_input:
                 parsed = urllib.parse.urlparse(user_input)
                 params = urllib.parse.parse_qs(parsed.query)
+                expected=urllib.parse.urlparse(redirect_uri)
+                if (parsed.scheme,parsed.netloc,parsed.path)!=(expected.scheme,expected.netloc,expected.path):
+                    raise TikTokAuthError('Redirect origin/path does not match configuration')
+                if not secrets.compare_digest(params.get('state',[''])[0],oauth_state):
+                    raise TikTokAuthError('Invalid authorization state')
                 auth_code = params.get('code', [None])[0]
             else:
-                auth_code = user_input
+                raise TikTokAuthError('Paste the complete redirect URL including state')
     except KeyboardInterrupt:
         raise TikTokAuthError("Authentication cancelled by user.")
         
     if not auth_code:
         logger.info("No manual input received. Falling back to local port listener...")
-        auth_code = run_callback_server(port=8080)
+        auth_code = run_callback_server(port=8080,expected_state=oauth_state)
         
     if not auth_code:
         raise TikTokAuthError("Failed to obtain authorization code.")
@@ -258,9 +277,9 @@ def authenticate_interactive() -> Optional[str]:
                 logger.success("TikTok integration successfully authenticated!")
                 return data.get('access_token')
             else:
-                raise TikTokAuthError(f"OAuth response missing access token: {data}")
+                raise TikTokAuthError(f"OAuth response missing access token: <redacted response>")
         else:
-            raise TikTokAuthError(f"HTTP {response.status_code} exchanging token: {response.text}")
+            raise TikTokAuthError(f"HTTP {response.status_code} exchanging token: <redacted response>")
     except Exception as e:
-        logger.error(f"TikTok authentication failed: {e}")
-        raise TikTokAuthError(f"Authentication flow failed: {e}") from e
+        logger.error(f"TikTok authentication failed: {type(e).__name__}")
+        raise TikTokAuthError(f"Authentication flow failed: {type(e).__name__}") from e

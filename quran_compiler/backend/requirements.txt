@@ -1,4 +1,7 @@
-fastapi
-uvicorn
-yt-dlp
-requests
+# Separate local compiler runtime. Python 3.11+; no core CLI credentials needed.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pydantic>=2.9,<3
+yt-dlp>=2025.9.26,<2027
+# Native request regression tests (FastAPI's base install omits TestClient transport).
+httpx>=0.28,<1

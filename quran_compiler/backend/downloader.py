@@ -1,12 +1,13 @@
 import os
 import re
 import json
-import yt_dlp
+import sys
+from pathlib import Path
+from .common import (MAX_CLIP_SECONDS, MAX_DOWNLOAD_BYTES, contained, video_id as validate_video_id,
+                     channel_url as validate_channel_url, run_process, check_cancel)
 
 # Folder setup
-BASE_DIR = r"C:\Users\acona\.gemini\antigravity\scratch\quran_compiler"
-DOWNLOADS_DIR = os.path.join(BASE_DIR, "data", "downloads")
-os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+# All downloads are explicitly owned by the caller's job. No import-time writes.
 
 # 114 Surahs mapping: (English name, Arabic name)
 SURAHS = [
@@ -202,105 +203,60 @@ def parse_video_title(title):
         "ayah_end": ayah_end
     }
 
-def fetch_shorts_metadata(channel_url_or_handle):
-    """
-    Uses yt-dlp to fetch metadata for all Shorts from a given YouTube channel.
-    Returns a list of dictionaries containing video metadata.
-    """
-    if channel_url_or_handle.startswith("@"):
-        channel_url = f"https://www.youtube.com/{channel_url_or_handle}/shorts"
-    elif "youtube.com" in channel_url_or_handle and "/shorts" not in channel_url_or_handle:
-        channel_url = channel_url_or_handle.rstrip("/") + "/shorts"
-    else:
-        channel_url = channel_url_or_handle
-
-    ydl_opts = {
-        'extract_flat': True,
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'playlistend': 50,
-    }
-
-    print(f"Fetching metadata for channel: {channel_url}")
-    shorts_list = []
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+def fetch_shorts_metadata(channel_url_or_handle, *, cancel=None):
+    """Only YouTube channel metadata; no config, cookies or arbitrary extractor URLs."""
+    url = validate_channel_url(channel_url_or_handle)
+    raw = run_process([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-cookies", "--no-playlist", "--flat-playlist", "--skip-download", "--playlist-end", "50", "--socket-timeout", "15", "--retries", "1", "--extractor-retries", "1", "--use-extractors", "youtube:tab", "--dump-single-json", "--", url], timeout=120, cancel=cancel)
+    info = json.loads(raw)
+    if not isinstance(info, dict) or not isinstance(info.get("entries"), list):
+        raise ValueError("YouTube returned unusable channel metadata.")
+    shorts = []
+    seen = set()
+    for entry in info["entries"][:50]:
+        if not isinstance(entry, dict):
+            continue
+        ident = entry.get("id", "")
         try:
-            info = ydl.extract_info(channel_url, download=False)
-            if 'entries' in info:
-                for entry in info['entries']:
-                    if not entry:
-                        continue
-                    
-                    title = entry.get('title', '')
-                    video_id = entry.get('id', '')
-                    video_url = entry.get('url', f"https://www.youtube.com/watch?v={video_id}")
-                    
-                    thumbnails = entry.get('thumbnails', [])
-                    thumbnail_url = thumbnails[-1].get('url', '') if thumbnails else ''
-                    
-                    parsed = parse_video_title(title)
-                    
-                    shorts_list.append({
-                        "id": video_id,
-                        "url": video_url,
-                        "title": title,
-                        "thumbnail": thumbnail_url,
-                        "duration": entry.get('duration', 30),
-                        "surah_en": parsed["surah_en"],
-                        "reciter_en": parsed["reciter_en"],
-                        "surah_ar": parsed["surah_ar"],
-                        "reciter_ar": parsed["reciter_ar"],
-                        "surah_num": parsed["surah_num"],
-                        "ayah_start": parsed["ayah_start"],
-                        "ayah_end": parsed["ayah_end"]
-                    })
-        except Exception as e:
-            print(f"Error fetching channel metadata: {e}")
-            raise e
+            validate_video_id(ident)
+        except (ValueError, TypeError):
+            continue
+        if ident in seen:
+            continue
+        seen.add(ident)
+        title = str(entry.get("title") or "Untitled source clip")[:500]
+        parsed = parse_video_title(title)
+        thumbnails = entry.get("thumbnails") or []
+        thumbnail = str(thumbnails[-1].get("url", "")) if thumbnails and isinstance(thumbnails[-1], dict) else ""
+        duration = entry.get("duration")
+        duration = float(duration) if isinstance(duration, (float, int)) and 0 < duration <= MAX_CLIP_SECONDS else None
+        shorts.append({"id": ident, "url": f"https://www.youtube.com/watch?v={ident}", "title": title, "thumbnail": thumbnail,
+                       "duration": duration, **parsed, "attribution_verified": False})
+    return shorts
 
-    return shorts_list
 
-def download_video(video_id, progress_hook=None):
-    """
-    Downloads a single YouTube video by ID to the downloads directory.
-    Saves it as {video_id}.mp4.
-    """
-    output_path = os.path.join(DOWNLOADS_DIR, f"{video_id}.mp4")
-    
-    if os.path.exists(output_path):
-        print(f"Video {video_id} already exists locally.")
-        return output_path
-
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': os.path.join(DOWNLOADS_DIR, f"{video_id}.%(ext)s"),
-        'merge_output_format': 'mp4',
-        'quiet': True,
-        'no_warnings': True,
-    }
-    
-    if progress_hook:
-        ydl_opts['progress_hooks'] = [progress_hook]
-
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-    print(f"Downloading video {video_id}...")
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([video_url])
-        
-    return output_path
-
-if __name__ == "__main__":
-    # Test cases
-    test_titles = [
-        "سورة البقرة آية 185 - القارئ ياسر الدوسري",
-        "Surah Al-Imran 3:5-7 | Sheikh Al-Sudais",
-        "Surah Al-Mulk Verse 1-4 | Maher Al-Muaiqly",
-        "تلاوة خاشعة - سورة الكهف 30 | رعد الكردي"
-    ]
-    for t in test_titles:
-        print(f"Title: {t}")
-        print(json.dumps(parse_video_title(t), indent=2, ensure_ascii=False))
-        print("-" * 30)
+def download_video(video_id, progress_hook=None, *, downloads_dir, cancel=None):
+    ident = validate_video_id(video_id)
+    root = Path(downloads_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    destination = contained(root, f"{ident}.mp4")
+    if destination.exists():
+        raise FileExistsError("Source file already exists in this job; start a new job to retry.")
+    check_cancel(cancel)
+    template = contained(root, f"{ident}.%(ext)s")
+    def size_check():
+        total = sum(p.stat().st_size for p in root.glob(f"{ident}.*") if p.is_file())
+        if total > MAX_DOWNLOAD_BYTES:
+            raise ValueError("Downloaded bytes exceed the per-clip size limit.")
+    try:
+        run_process([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-cookies", "--no-playlist", "--no-progress", "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1", "--extractor-retries", "1", "--use-extractors", "youtube", "--max-filesize", str(MAX_DOWNLOAD_BYTES), "--match-filters", f"duration <= {MAX_CLIP_SECONDS}", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", "--merge-output-format", "mp4", "--no-overwrites", "-o", str(template), "--", f"https://www.youtube.com/watch?v={ident}"], timeout=300, cancel=cancel, monitor=size_check)
+        if not destination.is_file() or not 0 < destination.stat().st_size <= MAX_DOWNLOAD_BYTES:
+            raise ValueError("Download was skipped, incomplete or exceeded the size limit.")
+        if progress_hook:
+            progress_hook({"status": "finished"})
+        return str(destination)
+    except BaseException:
+        # Only this validated video's owned files, including partial downloads.
+        for candidate in root.glob(f"{ident}.*"):
+            if candidate.is_file() and candidate.resolve().is_relative_to(root):
+                candidate.unlink(missing_ok=True)
+        raise

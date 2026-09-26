@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from loguru import logger
 
 from config.settings import DATABASE_DIR
+from core.runtime_safety import atomic_write_json, exclusive_lock
 
 
 _PEXELS_FILE_RE = re.compile(r"^pexels_(\d+)_", re.IGNORECASE)
@@ -37,8 +38,7 @@ def _save_history(history: List[Dict[str, Any]]) -> None:
     try:
         DATABASE_DIR.mkdir(parents=True, exist_ok=True)
         trimmed = history[-_MAX_HISTORY_ENTRIES:]
-        with _HISTORY_PATH.open("w", encoding="utf-8") as f:
-            json.dump(trimmed, f, ensure_ascii=False, indent=2)
+        atomic_write_json(_HISTORY_PATH, trimmed)
     except Exception as exc:
         logger.warning(f"Could not write background history: {exc}")
 
@@ -139,14 +139,9 @@ def pick_pexels_video_candidate(
 
 
 def record_background_usage(path: Path, source: str = "") -> None:
-    history = _load_history()
-    key = background_key_from_path(path)
-    history.append(
-        {
-            "key": key,
-            "path": str(path).replace("\\", "/"),
-            "source": source,
-            "used_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    _save_history(history)
+    with exclusive_lock(Path(str(_HISTORY_PATH) + ".lock")):
+        history = _load_history()
+        history.append({"key": background_key_from_path(path),
+                        "path": str(path).replace("\\", "/"), "source": source,
+                        "used_at": datetime.now(timezone.utc).isoformat()})
+        _save_history(history)

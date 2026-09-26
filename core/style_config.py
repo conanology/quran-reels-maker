@@ -34,10 +34,8 @@ class StyleConfig:
     page_font_size: int = 72
     page_words_per_line: int = 5
 
-    # Translation. At 1080x1920 this is the only element a non-Arabic speaker can
-    # read, and 36px rendered ~4px wide in the feed - effectively invisible.
-    # words_per_line has to keep the rendered line under ~1000px, otherwise
-    # _make_centered_frame scales the whole block down and the size above is moot.
+    # Shared translation style for documentary/custom renders. Shorts omit
+    # translation on frames and carry an attributed description separately.
     translation_font_size: int = 48
     translation_words_per_line: int = 7
     translation_color: str = "#D0D8E0"
