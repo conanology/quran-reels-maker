@@ -16,7 +16,7 @@ def test_dry_run_never_reads_or_writes_stores_or_auth(mocker):
 
 @pytest.mark.parametrize("mode", ["arabic_short_core", "arabic_short_gulf", "unknown"])
 def test_partial_titles_never_claim_full(mode):
-    title = growth.generate_engine_title(mode, 1, "alafasy")
+    title = growth.generate_engine_title(mode, 1, "minshawi_mujawwad")
     assert "full" not in title.lower() and "كاملة" not in title
 
 
@@ -32,7 +32,7 @@ def test_outside_schedule_skips_without_generation(mocker):
 def test_feedback_never_changes_selection_settings(mocker):
     session = MagicMock()
     session.query.return_value.order_by.return_value.limit.return_value.all.return_value = [
-        SimpleNamespace(video_id="v", surah=1, reciter_key="alafasy", video_type="short",
+        SimpleNamespace(video_id="v", surah=1, reciter_key="minshawi_mujawwad", video_type="short",
                         views=1000, engagement_rate=0.05, retention_rate=None, ctr=None, comments=3,
                         created_at=datetime.datetime.now() - datetime.timedelta(days=3))]
     mocker.patch("database.models.get_db_session", return_value=session)
@@ -56,7 +56,7 @@ def test_placeholder_experiment_cannot_fabricate_video_ids(mocker):
 def test_invalid_analytics_rejected_before_store(field, value, mocker):
     store = mocker.patch("database.models.get_db_session")
     values = dict(video_id="v", views=100, likes=2, comments=1, retention_rate=None, ctr=None,
-                  surah=1, reciter_key="alafasy", video_type="short")
+                  surah=1, reciter_key="minshawi_mujawwad", video_type="short")
     values[field] = value
     with pytest.raises(ValueError):
         growth.ingest_video_analytics(**values)
@@ -86,25 +86,25 @@ def publishing_fixture(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("ENABLE_TIKTOK_AUTOPUBLISH", raising=False)
     mocker.patch("youtube.auth.check_authentication_status", return_value={"status": "valid"})
     mocker.patch.object(growth, "get_mecca_time", return_value=datetime.datetime(2026, 9, 28, 5))
-    mocker.patch.object(growth, "pick_reciter", return_value="alafasy")
+    mocker.patch.object(growth, "pick_reciter", return_value="minshawi_mujawwad")
     mocker.patch.object(growth, "pick_surah", return_value=1)
     video = tmp_path / "fixture.mp4"
     video.write_bytes(b"synthetic bytes")
     write_media_manifest(video, {"coverage": [{"surah": 1, "start_ayah": 1, "end_ayah": 3}],
-                                "verses": [{"surah": 1, "ayah": ayah, "reciter_key": "alafasy",
+                                "verses": [{"surah": 1, "ayah": ayah, "reciter_key": "minshawi_mujawwad",
                                             "recording_url": "https://example.invalid/audio",
                                             "audio_sha256": "0" * 64, "audio_duration": 1.0,
                                             "text": "Synthetic text",
                                             "text_source": {"provider": "synthetic", "verse_key": f"1:{ayah}",
                                                 "text_sha256": hashlib.sha256(b"Synthetic text").hexdigest()},
                                             "timing_source": {"status": "not_available", "word_count": 2}}
-                                           for ayah in range(1, 4)], "reciter_key": "alafasy",
+                                           for ayah in range(1, 4)], "reciter_key": "minshawi_mujawwad",
                                 "duration_seconds": 3, "loop_count": 1,
                                 "streams": {"width": 1080, "height": 1920}})
     render = mocker.patch.object(growth, "generate_reel", return_value=(video, 1, 3))
     approve = mocker.patch("notifications.publishing_policy.require_automatic_approval", return_value={})
     def upload_with_receipt(*args, **kwargs):
-        receipt={"status": "published", "privacy_status": "public", "video_id": "fixture", "url": "https://example.invalid/fixture"}
+        receipt={"status": "published", "privacy_status": "public", "video_id": "fixture0001", "url": "https://example.invalid/fixture"}
         jobs.record_upload_receipt(kwargs['job_id'],'youtube',receipt)
         return receipt
     upload = mocker.patch("youtube.uploader.upload_video", side_effect=upload_with_receipt)
@@ -120,9 +120,57 @@ def test_growth_success_commits_published_cursor_and_skips_repeat(publishing_fix
     assert second["status"] == "skipped"
     assert render.call_count == approve.call_count == upload.call_count == 1
     with models.get_db_session() as session:
-        progress = session.query(models.VerseProgress).one()
-        assert (progress.current_surah, progress.current_ayah) == (1, 4)
+        progress = session.query(models.SurahShortsProgress).one()
+        assert (progress.surah, progress.next_ayah) == (1, 4)
         assert session.query(models.ReelHistory).count() == 1
+
+
+def test_different_slots_share_surah_and_reciter_rotation(publishing_fixture, mocker):
+    """Exercise reservation, rendered coverage, receipts and finalization together."""
+    import json
+    import database.jobs as jobs
+    from config.settings import SHORTS_RECITERS
+    from core.utils import write_media_manifest
+    models, render, approve, upload = publishing_fixture
+    video = render.return_value[0]
+    template = json.loads(video.with_suffix('.mp4.manifest.json').read_text())
+    selected = []
+
+    def render_selected(**kwargs):
+        surah, start, end, reciter = (kwargs[key] for key in
+            ('surah', 'start_ayah', 'end_ayah', 'reciter_key'))
+        selected.append((surah, start, end, reciter))
+        manifest = dict(template, reciter_key=reciter,
+                        coverage=[dict(surah=surah, start_ayah=start, end_ayah=end)])
+        verse = template['verses'][0]
+        manifest['verses'] = [dict(verse, surah=surah, ayah=ayah, reciter_key=reciter,
+            text_source=dict(verse['text_source'], verse_key=f'{surah}:{ayah}'))
+            for ayah in range(start, end + 1)]
+        write_media_manifest(video, manifest)
+        return video, start, end
+
+    def publish_selected(*args, **kwargs):
+        receipt = dict(status='published', privacy_status='public',
+                       video_id=f'fixture{len(selected):04d}', url='https://example.invalid/fixture')
+        jobs.record_upload_receipt(kwargs['job_id'], 'youtube', receipt)
+        return receipt
+
+    render.side_effect = render_selected
+    upload.side_effect = publish_selected
+    for day, hour, slot in [(28, 5, 'morning_short'), (28, 21, 'evening_short'),
+                            (29, 5, 'morning_short')]:
+        mocker.patch.object(growth, 'get_mecca_time', return_value=datetime.datetime(2026, 9, day, hour))
+        result = growth.execute_scheduled_slot(slot)
+        assert result['status'] == 'success', result
+    assert selected == [(surah, 1, 3, reciter) for surah, reciter in enumerate(SHORTS_RECITERS, 1)]
+    assert render.call_count == approve.call_count == upload.call_count == 3
+    with models.get_db_session() as session:
+        assert sorted((row.surah, row.next_ayah) for row in session.query(models.SurahShortsProgress)) == [
+            (1, 4), (2, 4), (3, 4)]
+        assert session.query(models.ReelHistory).count() == 3
+        assert session.query(models.VerseProgress).count() == 0
+    assert jobs.get_next_shorts_selection()['reciter_key'] == SHORTS_RECITERS[0]
+    assert jobs.get_next_shorts_selection()['surah'] == 4
 
 
 def test_growth_rejection_does_not_upload_or_advance(publishing_fixture):
@@ -133,7 +181,7 @@ def test_growth_rejection_does_not_upload_or_advance(publishing_fixture):
     assert result["status"] == "failed"
     upload.assert_not_called()
     with models.get_db_session() as session:
-        assert session.query(models.VerseProgress).one().current_ayah == 1
+        assert session.query(models.SurahShortsProgress).count() == 0
         assert session.query(models.ReelHistory).count() == 0
 
 
@@ -156,7 +204,7 @@ def test_post_publication_failure_preserves_confirmed_job(publishing_fixture, mo
         job = session.query(models.PublishingJob).one()
         assert job.finalized and job.status == "published"
         assert session.query(models.ReelHistory).count() == 1
-        assert session.query(models.VerseProgress).one().current_ayah == 4
+        assert session.query(models.SurahShortsProgress).one().next_ayah == 4
 
 
 def test_longform_wrong_coverage_stops_before_review_or_transfer(publishing_fixture, mocker):
@@ -193,4 +241,4 @@ def test_longform_uses_complete_coverage_and_recommended_title(publishing_fixtur
     with models.get_db_session() as session:
         history = session.query(models.LongformHistory).one()
         assert (history.surah_start, history.surah_end, history.ayah_start, history.ayah_end) == (1, 1, 1, 7)
-        assert session.query(models.VerseProgress).one().current_ayah == 1
+        assert session.query(models.SurahShortsProgress).count() == 0

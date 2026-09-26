@@ -70,3 +70,15 @@ Additional evidence: `outputs/remediation/web/implementation-evidence.md`, nativ
 No live posts, approval messages, OAuth authorization, paid model calls or workflow dispatches were performed. The existing production DB was preserved without migration. A qualified reviewer must verify authentic recording/reciter identity, verse/text/basmala alignment, Quran marks/pronunciation and source/asset rights before automatic publication.
 
 The owner must configure the intended accounts and approver, explicitly reconcile legacy published coverage, validate live platform authorization/processing in an approved account, and deliberately enable automation. Ambiguous transfers must be reconciled against their remote IDs before recovery. State artifact expiry or a failed artifact write requires recovery rather than fresh publication. These are explicit operational gates, not locally verified claims.
+
+## Follow-up: Shorts surah and reciter rotation
+
+Owner decision: a different surah for every automatic Short, with each surah's ayah position saved independently. All 114 surahs now rotate in Quran order. The fixed reader sequence is Minshawi Mujawwad → Mahmoud Ali Al-Banna → Yasser Al-Dossari. Local generation/test failures do not consume a turn; confirmed public publication updates history and rotation atomically. Main auto/batch and growth morning/evening slots share selection. Existing uncertain sequential/rotation transfers block a new reservation or upload across policy transitions. Migration backs up the database and retains the legacy sequential cursor. `status` shows the next rotating Short.
+
+Yasser uses EveryAyah's `Yasser_Ad-Dussary_128kbps` verse directory. No Quran.com word timing ID was invented; unsupported readers use static Arabic text. [Arabic explanation and operating examples](shorts-policy.md).
+
+Local diagnosis found the earlier selector stayed on its current surah until completion; the preserved production history is dominated by Al-Baqarah. That local history does not establish why Al-Asr/Al-Kawthar repeated on the owner's live channel. This follow-up verifies the new requested selection policy locally, without claiming remote deployment or inspecting/replacing old posts.
+
+Latest full isolated verification: **284 passed**, **91 Python files parsed**, zero syntax failures, **25.48 seconds**, production database unchanged (SHA256 `cf9c5f8988265438527778d066f838fa0d297e40dd72afa302b3089b3c13ca27`). Includes a complete 114-surah traversal, resumption of Al-Fatihah at ayah4, completed Al-Kawthar wrapping only on its later turn, public/private/failure boundaries, cross-policy uncertainty, migration backups, three successive growth slots using all three readers, and three rejected regenerations retaining their reserved verses. The broad command above remains the verification command. Existing dependency/datetime deprecation warnings remain.
+
+No live publishing, deployment, push, account messages or production migration was performed. Thumbnail refactoring remains deferred.

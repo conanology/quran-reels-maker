@@ -236,11 +236,21 @@ RECITERS = {
         "id": "mahmoud_ali_al_banna_32kbps",
         "name_ar": "الشيخ محمود علي البنا",
         "name_en": "Mahmoud Ali Al-Banna"
+    },
+    "yasser_dossari": {
+        "id": "Yasser_Ad-Dussary_128kbps",
+        "name_ar": "الشيخ ياسر الدوسري",
+        "name_en": "Yasser Al-Dossari"
     }
 }
 
 # Default reciter
 DEFAULT_RECITER = _env_choice("DEFAULT_RECITER", "alafasy", list(RECITERS))
+
+# Owner-approved Shorts voices, in publication rotation order. Longform keeps
+# its separate reciter selection. EveryAyah publishes Yasser's verse files;
+# he has no Quran.com ayah timing ID, so use truthful static Arabic text.
+SHORTS_RECITERS = ("minshawi_mujawwad", "banna", "yasser_dossari")
 
 # =============================================================================
 # SURAH DATA
@@ -359,7 +369,7 @@ QURAN_V4_API_BASE = "https://api.quran.com/api/v4"
 # These ids also select the audio file, so a wrong one publishes the wrong
 # reciter's voice under the right reciter's name. Verified against
 # /api/v4/resources/recitations; tests/test_reciter_mapping.py guards them.
-# banna, hudhaify and maher_muaiqly are absent upstream and have no timings.
+# banna, yasser_dossari, hudhaify and maher_muaiqly are absent upstream and have no timings.
 RECITER_MAPPING_V4 = {
     "abdul_basit_mujawwad": 1,   # AbdulBaset AbdulSamad (Mujawwad)
     "abdul_basit_murattal": 2,   # AbdulBaset AbdulSamad (Murattal)

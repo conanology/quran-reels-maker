@@ -237,8 +237,8 @@ def test_main_auto_publication_commits_only_after_completed_receipt(state,tmp_pa
     monkeypatch.setattr(utils,'verify_media_streams',lambda *a:dict(width=1080,height=1920,video_duration=3,audio_duration=3))
     def generate(**kw):
         video=Path(kw['output_path']);video.parent.mkdir(parents=True,exist_ok=True);video.write_bytes(b'synthetic')
-        write_media_manifest(video,dict(reciter_key='alafasy',coverage=[dict(surah=1,start_ayah=1,end_ayah=actual_end)],
-            verses=[dict(surah=1,ayah=a,reciter_key='alafasy',text='rendered Arabic',
+        write_media_manifest(video,dict(reciter_key='minshawi_mujawwad',coverage=[dict(surah=1,start_ayah=1,end_ayah=actual_end)],
+            verses=[dict(surah=1,ayah=a,reciter_key='minshawi_mujawwad',text='rendered Arabic',
                 text_source=dict(provider='synthetic',verse_key=f'1:{a}',text_sha256=hashlib.sha256(b'rendered Arabic').hexdigest()),
                 timing_source=dict(status='not_available',word_count=2),
                 audio_sha256='0'*64,audio_duration=1,recording_url='https://example.invalid') for a in range(1,actual_end+1)],
@@ -267,11 +267,11 @@ def test_main_auto_publication_commits_only_after_completed_receipt(state,tmp_pa
     monkeypatch.setattr(publishing_policy,'require_automatic_approval',review)
     def upload(video,meta,**kw):
         assert kw['automatic'] and video.is_relative_to(tmp_path/'custom-output')
-        receipt=dict(video_id='synthetic',url='https://example.invalid',status='published',privacy_status='public')
+        receipt=dict(video_id='synthetic01',url='https://example.invalid',status='published',privacy_status='public')
         jobs.record_upload_receipt(kw['job_id'],'youtube',receipt)
         return receipt
     transfer=MagicMock(side_effect=upload);monkeypatch.setattr(uploader,'upload_video',transfer)
-    args=SimpleNamespace(surah=None,start=None,end=None,verses=3,reciter='alafasy',test=False,dry_run=False)
+    args=SimpleNamespace(surah=None,start=None,end=None,verses=3,reciter='minshawi_mujawwad',test=False,dry_run=False)
     if not review_available:
         from tiktok import uploader as tiktok_uploader
         tiktok=MagicMock(side_effect=AssertionError('unapproved crosspost'))
@@ -285,8 +285,9 @@ def test_main_auto_publication_commits_only_after_completed_receipt(state,tmp_pa
         return
     result=main._run_auto_reel(args)
     assert result['status']==('partial' if review_available=='crosspost_error' else 'published')
-    session=models.get_db_session();progress=session.query(models.VerseProgress).one()
-    assert (progress.current_surah,progress.current_ayah,progress.total_reels_generated)==(1,actual_end+1,1)
+    session=models.get_db_session();progress=session.query(models.SurahShortsProgress).one()
+    assert (progress.surah,progress.next_ayah)==(1,actual_end+1)
+    assert session.query(models.VerseProgress).count()==0
     assert session.query(models.ReelHistory).count()==1
     job=session.query(models.PublishingJob).one()
     assert job.finalized and job.status=='published'
@@ -298,8 +299,8 @@ def verified_fixture_video(tmp_path,monkeypatch):
     from core import utils
     monkeypatch.setattr(utils,'verify_media_streams',lambda *a:dict(width=1080,height=1920,video_duration=3,audio_duration=3))
     video=tmp_path/'verified.mp4';video.write_bytes(b'synthetic-media')
-    utils.write_media_manifest(video,dict(reciter_key='alafasy',coverage=[dict(surah=1,start_ayah=1,end_ayah=3)],
-        verses=[dict(surah=1,ayah=a,reciter_key='alafasy',text='Synthetic text',audio_sha256='0'*64,
+    utils.write_media_manifest(video,dict(reciter_key='minshawi_mujawwad',coverage=[dict(surah=1,start_ayah=1,end_ayah=3)],
+        verses=[dict(surah=1,ayah=a,reciter_key='minshawi_mujawwad',text='Synthetic text',audio_sha256='0'*64,
             text_source=dict(provider='synthetic',verse_key=f'1:{a}',text_sha256=hashlib.sha256(b'Synthetic text').hexdigest()),
             timing_source=dict(status='not_available',word_count=2),audio_duration=1,recording_url='https://example.invalid') for a in range(1,4)],
         duration_seconds=3,loop_count=1,streams=dict(width=1080,height=1920)))
@@ -323,7 +324,7 @@ def test_main_longform_wrong_manifest_stops_before_review_and_transfer(state,ver
     transfer=MagicMock(side_effect=AssertionError('Wrong coverage reached remote transfer'))
     monkeypatch.setattr(publishing_policy,'require_automatic_approval',reviewer)
     monkeypatch.setattr(uploader,'upload_video',transfer)
-    result=main.cmd_auto_longform(SimpleNamespace(test=False,reciter='alafasy'))
+    result=main.cmd_auto_longform(SimpleNamespace(test=False,reciter='minshawi_mujawwad'))
     assert result['status']=='failed'
     reviewer.assert_not_called();transfer.assert_not_called()
     with models.get_db_session() as session:
@@ -337,11 +338,11 @@ def test_main_short_claimed_tuple_must_match_manifest_before_review(state,verifi
     from notifications import publishing_policy
     from youtube import uploader
     monkeypatch.setattr(main,'cmd_generate',lambda args:dict(video_path=verified_fixture_video,
-        surah=1,start_ayah=1,end_ayah=4,reciter='alafasy',full_text='Synthetic'))
+        surah=1,start_ayah=1,end_ayah=4,reciter='minshawi_mujawwad',full_text='Synthetic'))
     reviewer=MagicMock(side_effect=AssertionError('Wrong coverage reached review'))
     transfer=MagicMock(side_effect=AssertionError('Wrong coverage reached remote transfer'))
     monkeypatch.setattr(publishing_policy,'require_automatic_approval',reviewer)
     monkeypatch.setattr(uploader,'upload_video',transfer)
-    result=main._run_auto_reel(SimpleNamespace(surah=1,start=1,end=3,verses=3,reciter='alafasy',test=False,dry_run=False))
+    result=main._run_auto_reel(SimpleNamespace(surah=1,start=1,end=3,verses=3,reciter='minshawi_mujawwad',test=False,dry_run=False))
     assert result['status']=='failed'
     reviewer.assert_not_called();transfer.assert_not_called()

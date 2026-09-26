@@ -113,6 +113,16 @@ def init_database():
         has_legacy_state=any(connection.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar()>0
                              for table in ('verse_progress','reel_history') if table in tables)
         marker=connection.execute(text("SELECT value FROM app_settings WHERE key='publication_cursor_verified'")).scalar() if 'app_settings' in tables else None
+    if 'publishing_jobs' in tables and not {'shorts_rotation', 'shorts_cycle'} <= {c['name'] for c in inspect(engine).get_columns('publishing_jobs')}:
+        import sqlite3
+        backup_path = DATABASE_PATH.with_suffix('.pre-shorts-rotation.sqlite')
+        if not backup_path.exists():
+            source = engine.raw_connection()
+            try:
+                with sqlite3.connect(backup_path) as backup:
+                    source.driver_connection.backup(backup)
+            finally:
+                source.close()
     if has_legacy_state and marker is None:
         import sqlite3
         backup_path=DATABASE_PATH.with_suffix('.pre-safety-migration.sqlite')
@@ -159,7 +169,8 @@ def init_database():
             # in these old columns. Preserve counts and attribution/history.
             connection.execute(text('UPDATE video_analytics SET retention_rate=NULL, ctr=NULL'))
         job_columns={c['name'] for c in inspect(connection).get_columns('publishing_jobs')}
-        for name,declaration in [('finalized','BOOLEAN DEFAULT 0'),('metadata_json','TEXT'),('manifest','TEXT'),('surah_end','INTEGER')]:
+        for name,declaration in [('finalized','BOOLEAN DEFAULT 0'),('metadata_json','TEXT'),('manifest','TEXT'),('surah_end','INTEGER'),
+                                 ('shorts_rotation','BOOLEAN NOT NULL DEFAULT 0'),('shorts_cycle','INTEGER')]:
             if name not in job_columns:
                 connection.execute(text(f'ALTER TABLE publishing_jobs ADD COLUMN {name} {declaration}'))
 
@@ -216,6 +227,16 @@ class ReelHistory(Base):
         if self.start_ayah == self.end_ayah:
             return str(self.start_ayah)
         return f"{self.start_ayah}-{self.end_ayah}"
+
+
+class SurahShortsProgress(Base):
+    """Independent continuation position for each surah in the Shorts rotation."""
+    __tablename__ = 'surah_shorts_progress'
+    __table_args__ = (CheckConstraint('surah >= 1 AND surah <= 114'),
+                      CheckConstraint('next_ayah >= 1'), CheckConstraint('cycle >= 0'))
+    surah = Column(Integer, primary_key=True)
+    next_ayah = Column(Integer, nullable=False, default=1)
+    cycle = Column(Integer, nullable=False, default=0)
 
 
 class LongformHistory(Base):
@@ -324,6 +345,8 @@ class PublishingJob(Base):
     end_ayah = Column(Integer, nullable=True)
     reciter_key = Column(String(50), nullable=True)
     sequential = Column(Integer, nullable=False, default=0)
+    shorts_rotation = Column(Boolean, nullable=False, default=False)
+    shorts_cycle = Column(Integer, nullable=True)
     status = Column(String(30), nullable=False, default='reserved')
     finalized = Column(Boolean, nullable=False, default=False)
     video_path = Column(Text, nullable=True)

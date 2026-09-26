@@ -80,6 +80,7 @@ database/upload_receipts/
 database/upload_attempts/
 database/*.lock
 database/*.pre-safety-migration.sqlite
+database/*.pre-shorts-rotation.sqlite
 outputs/jobs/
 outputs/videos/reel_*/
 outputs/videos/*.lock

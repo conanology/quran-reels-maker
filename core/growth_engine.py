@@ -18,6 +18,7 @@ from config.settings import (
     SURAH_NAMES_EN,
     RECITERS,
     DEFAULT_RECITER,
+    SHORTS_RECITERS,
     LONGFORM_OUTPUT_DIR,
     VIDEOS_DIR
 )
@@ -35,27 +36,9 @@ S_TIER_SURAHS = [2, 18, 36, 55, 67]   # Al-Baqarah, Al-Kahf, Yasin, Ar-Rahman, A
 A_TIER_SURAHS = [19, 20, 56, 32, 44]  # Maryam, Taha, Al-Waqi'ah, As-Sajdah, Ad-Dukhan
 B_TIER_SURAHS = [50, 72, 71, 73, 74]  # Qaf, Al-Jinn, Nuh, Al-Muzzammil, Al-Muddaththir
 
-# Module 3: Reciter Matrix
+# Longform reciter weights. Shorts use the fixed publication rotation.
 RECITER_WEIGHTS = {
     # format: {reciter_key: weight}
-    "standard_short": {
-        "alafasy": 0.20,
-        "maher_muaiqly": 0.20,
-        "sudais": 0.15,
-        "shaatree": 0.15,
-        "husary": 0.15,
-        "abdul_basit_murattal": 0.15
-    },
-    "gulf_short": {
-        "maher_muaiqly": 0.50,
-        "sudais": 0.30,
-        "alafasy": 0.20
-    },
-    "english_short": {
-        "shaatree": 0.40,
-        "alafasy": 0.40,
-        "maher_muaiqly": 0.20
-    },
     "weekly_compilation": {
         "alafasy": 0.40,
         "sudais": 0.30,
@@ -128,11 +111,7 @@ def get_slot_format(slot: str) -> str:
     if slot == "morning_short":
         return "standard_short"
     elif slot == "evening_short":
-        # Randomly choose between Gulf Bait, English tagged, or standard
-        return random.choices(
-            ["standard_short", "gulf_short", "english_short"], 
-            weights=[0.50, 0.30, 0.20]
-        )[0]
+        return "standard_short"
     elif slot == "friday_long":
         return "full_surah_long"
     elif slot == "saturday_sleep":
@@ -177,8 +156,11 @@ def is_combo_repeated_recently(surah: int, reciter_key: str, days: int = 7) -> b
 
 
 def pick_reciter(format_type: str) -> str:
-    """Select a reciter key based on format CPM weights."""
-    weights = RECITER_WEIGHTS.get(format_type, RECITER_WEIGHTS["standard_short"])
+    """Shorts follow the owner-approved cycle; longform retains its selection."""
+    if "short" in format_type:
+        from database.jobs import get_next_shorts_selection
+        return get_next_shorts_selection()['reciter_key']
+    weights = RECITER_WEIGHTS.get(format_type, RECITER_WEIGHTS["full_surah_long"])
     reciters = list(weights.keys())
     probs = list(weights.values())
     return random.choices(reciters, weights=probs)[0]
@@ -196,16 +178,8 @@ def pick_surah(format_type: str, reciter_key: str) -> int:
     downweights = {}
 
     if "short" in format_type:
-        # Volume play: proceed sequentially through current progress
-        session = get_db_session()
-        try:
-            progress = session.query(VerseProgress).first()
-            if progress:
-                surah = progress.current_surah
-                return surah
-            return 1
-        finally:
-            session.close()
+        from database.jobs import get_next_shorts_selection
+        return get_next_shorts_selection()['surah']
             
     # For long-forms, select from S-Tier or A-Tier
     tiers = S_TIER_SURAHS + A_TIER_SURAHS
@@ -391,7 +365,7 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
     format_type = get_slot_format(slot_name)
     if dry_run:
         # No settings reads: even opening a store can initialize it on a fresh checkout.
-        surah, reciter = 1, DEFAULT_RECITER
+        surah, reciter = 1, SHORTS_RECITERS[0] if "short" in format_type else DEFAULT_RECITER
         template = get_thumbnail_template_for_format(format_type, persist=False, read_history=False)
         return {"status": "dry_run", "slot": slot_name, "format": format_type,
                 "surah": surah, "reciter": reciter,
@@ -412,7 +386,7 @@ def execute_scheduled_slot(slot_name: Optional[str] = None, dry_run: bool = Fals
 
 def _execute_selected_slot(slot_name, format_type, now):
     from database.models import get_setting, set_setting
-    from database.jobs import reserve_job, mark_job, finalize_published_job
+    from database.jobs import reserve_job, mark_job, finalize_published_job, get_next_shorts_selection
     from notifications.publishing_policy import require_automatic_approval
     from youtube.uploader import upload_video, upload_thumbnail
     from core.utils import load_media_manifest, require_manifest_coverage
@@ -423,30 +397,27 @@ def _execute_selected_slot(slot_name, format_type, now):
     if any(not os.getenv(key, "").strip() for key in required):
         return {"status": "failed", "error": "Automatic publication requires reviewer and expected account configuration."}
     from database.models import init_database
-    from core.verse_scheduler import get_current_progress
     init_database()
-    current = get_current_progress()
-    reciter = pick_reciter(format_type)
-    surah = pick_surah(format_type, reciter)
-    start_ayah = 1
-    sequential = "short" in format_type and current["surah"] == surah
-    session = get_db_session()
-    try:
-        progress = session.query(VerseProgress).first()
-        if "short" in format_type and progress and progress.current_surah == surah:
-            start_ayah = progress.current_ayah
-            sequential = True
-    finally:
-        session.close()
-    end_ayah = min(start_ayah + 2, VERSE_COUNTS[surah]) if "short" in format_type else VERSE_COUNTS[surah]
+    rotation = "short" in format_type
+    if rotation:
+        selection = get_next_shorts_selection()
+        surah, start_ayah, end_ayah, reciter = (selection[key] for key in
+                                              ('surah','start_ayah','end_ayah','reciter_key'))
+    else:
+        reciter = pick_reciter(format_type)
+        surah = pick_surah(format_type, reciter)
+        start_ayah, end_ayah = 1, VERSE_COUNTS[surah]
     job = reserve_job(f"growth:{now.date().isoformat()}:{slot_name}", surah=surah,
-                      start_ayah=start_ayah, end_ayah=end_ayah, reciter_key=reciter, sequential=sequential,
+                      start_ayah=start_ayah, end_ayah=end_ayah, reciter_key=reciter,
+                      shorts_rotation=rotation, cycle=selection['cycle'] if rotation else None,
                       surah_end=surah if "short" not in format_type else None)
     if job.get("finalized") or job.get("status") not in {"reserved", "pending"}:
         return {"status": "skipped", "message": "This occurrence already has a job; reconcile it before retrying.", "job_id": job["id"]}
     # The persisted reservation owns the content, including after interruption.
     surah, start_ayah, end_ayah, reciter = job["surah"], job["start_ayah"], job["end_ayah"], job["reciter_key"]
-    sequential = bool(job["sequential"])
+    if rotation:
+        from core.shorts_policy import require_shorts_reciter
+        require_shorts_reciter(reciter)
     completed_receipt = None
     try:
         template = get_thumbnail_template_for_format(format_type, persist=False)

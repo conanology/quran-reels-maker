@@ -10,12 +10,12 @@ Use Python 3.11+ with FFmpeg/FFprobe on PATH. Python 3.14 on Windows is locally 
 python -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 .\venv\Scripts\python.exe -m playwright install chromium
-.\venv\Scripts\python.exe main.py generate --surah 112 --start 1 --end 4 --reciter alafasy
+.\venv\Scripts\python.exe main.py generate --surah 112 --start 1 --end 4 --reciter minshawi_mujawwad
 ```
 
 For Linux, use `venv/bin/python` and `python -m playwright install --with-deps chromium`. Add reviewed nature backgrounds to `assets/backgrounds/`. Bundled fonts are used; the active style selects its font. Record source/creator/license review with each asset rather than treating a download as rights clearance. Missing backgrounds/fonts, expected timing failures, overlong first verses and incomplete longform coverage stop generation visibly.
 
-Copy `.env.example` to `.env` for local configuration. Default reciter is alafasy, CPU encoder is libx264, Shorts target is 59 seconds (a product default, configurable up to 180). `VIDEO_ENCODER=h264_nvenc` is explicit; `_detect_encoder()` provides a real runtime probe for integrations instead of trusting advertised encoders. Imports do not create output directories, database tables or log files.
+Copy `.env.example` to `.env` for local configuration. Longform default reciter is alafasy. Shorts rotate Minshawi Mujawwad, Mahmoud Ali Al-Banna and Yasser Al-Dossari. CPU encoder is libx264, Shorts target is 59 seconds (a product default, configurable up to 180). `VIDEO_ENCODER=h264_nvenc` is explicit; `_detect_encoder()` provides a real runtime probe for integrations instead of trusting advertised encoders. Imports do not create output directories, database tables or log files.
 
 Generated files have a `.manifest.json` sidecar with verified stream durations, exact verse/recording coverage, reciter, audio/video checksums, background provenance and content-review requirements. Do not distribute or publish a failed/partial artifact merely because an MP4 exists. Actual recording identity, Uthmani marks, basmala boundaries and pronunciation require a qualified visual/listening review. No automated test certifies those domain properties.
 
@@ -23,7 +23,7 @@ Generated files have a `.manifest.json` sidecar with verified stream durations, 
 
 | Command | Behavior |
 | --- | --- |
-| `generate --surah 112 --start 1 --end 4 --reciter alafasy` | Generate local content; does not advance published progress. |
+| `generate --surah 112 --start 1 --end 4 --reciter minshawi_mujawwad` | Generate local content with an allowed Shorts reciter; does not advance published progress. |
 | `generate --dry-run` | Read-only illustrative selection, no rendering or store changes. |
 | `auto --test` | Generate only; no review messages or platform uploads. |
 | `auto --dry-run` | No generation, account calls or state changes. |
@@ -36,14 +36,16 @@ Generated files have a `.manifest.json` sidecar with verified stream durations, 
 | `growth-engine run --slot morning_short --dry-run` | Illustrative decision without settings/auth/analytics writes. |
 | `growth-engine run-feedback` | Advisory observations; no automatic penalties or fabricated metric-driven selection. |
 | `status`, `history`, `longform status` | Inspect local progression and receipts/history. |
-| `set-position 36 1` | Explicitly reconcile/reset the published journey after reviewing previous coverage. |
+| `set-position 36 1` | Reconcile the legacy sequential cursor after review; does not reset individual Shorts surah positions. |
 | `setup-youtube`, `setup-tiktok` | Explicit interactive authorization; automatic routes cannot silently start OAuth. |
 
 Automatic publishing always requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_APPROVER_ID` and `YOUTUBE_EXPECTED_CHANNEL_ID`. Set `TIKTOK_EXPECTED_OPEN_ID` before separately enabling `ENABLE_TIKTOK_AUTOPUBLISH=true`. Missing configuration, failed delivery, wrong account, rejected/expired approval or changed media/metadata/thumbnail stops transfer. `APPROVAL_REQUIRED=false` cannot bypass this boundary. Approval replies must target the specific video and include its nonce and package hash. Legacy cookie/browser TikTok posting is disabled because it cannot verify privacy/account/completion.
 
 Test mode never uploads privately or publicly. A manual private upload remains a real platform mutation. Transfers, processing completion and public publication are distinct outcomes. YouTube/TikTok account processing is polled with bounded deadlines; durable transfer attempts/receipts prevent blind retransfers after a crash. A timeout is an unresolved outcome, not permission to post again.
 
-Only confirmed public sequential publication advances the journey. Friday/thematic selections have separate reservations. Existing progress from the old generation-based model requires explicit reconciliation; it is not evidence of published coverage. Schema migration backs up legacy state and does not choose/delete competing cursors.
+Each confirmed public automatic Short selects the next surah in Quran order, traversing all 114 surahs, and saves the next ayah separately for each surah. Readers rotate Minshawi Mujawwad → Al-Banna → Yasser Al-Dossari. Both `auto`/`batch` and growth morning/evening slots share this policy; omit `--reciter` for automatic rotation. Explicit automatic surah/reader inputs must match the queued selection. Local `generate` allows a chosen surah with any of the three readers and does not consume the publication queue. Friday Shorts follow the same rotation. Unsupported word timing (including Al-Banna/Yasser) uses static Arabic text. See the [simple Arabic policy explanation](docs/shorts-policy.md).
+
+Legacy published history seeds each surah's continuation; generation-only rows cannot advance it. Existing progress from the old generation-based model requires explicit reconciliation; it is not evidence of published coverage. Migration creates a `.pre-shorts-rotation.sqlite` backup and preserves the old sequential cursor separately. Uncertain transfers in either old or new policy block new journey publication until recovered.
 
 AI metadata is disabled by default (`ENABLE_AI_METADATA=false`). Enabled output is a bounded suggestion requiring final review; canonical Quran text/translation attribution is authoritative. Unavailable CTR/retention stays null. Automatic experiment promotion, synthetic A/B variants and the incomplete sleep/weekly/documentary formats are unavailable until their content/exposure contracts are implemented. See [documentary status](documentary/README.md). Thumbnail generation logic is retained for the next separately requested refactor; final thumbnail bytes participate in approval.
 

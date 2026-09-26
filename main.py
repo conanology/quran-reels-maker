@@ -3,7 +3,7 @@
 Quran Reels Maker - Automated Quran Short Videos for YouTube & TikTok
 
 Usage:
-    python main.py generate              Generate next reel in sequence
+    python main.py generate              Preview the next rotating Short
     python main.py generate --surah 112  Generate specific surah
     python main.py upload <video_path>   Upload a video to YouTube
     python main.py tiktok <video_path>   Upload a video to TikTok
@@ -36,21 +36,18 @@ def cmd_generate(args):
         print('DRY RUN: generation preview; sequence is read only when generation runs')
         return {'status':'dry_run','requested_surah':getattr(args,'surah',None)}
     from core.video_generator import generate_reel
-    from core.verse_scheduler import (
-        get_next_verses,
-        advance_progress,
-        record_reel_history,
-        get_current_progress
-    )
+    from core.verse_scheduler import record_reel_history
     from core.quran_api import get_surah_name
-    from config.settings import DEFAULT_RECITER, RECITERS
-    
-    # Honor the configured default when no reciter is requested.
+    from config.settings import RECITERS, VERSE_COUNTS
+    from core.shorts_policy import require_shorts_reciter
+    from database.jobs import get_next_shorts_selection
     if args.reciter:
-        reciter = args.reciter
-    else:
-        reciter = DEFAULT_RECITER
-        logger.info("Using configured default reciter: {}", reciter)
+        try:
+            require_shorts_reciter(args.reciter)
+        except ValueError as error:
+            return {'status':'failed','error':str(error)}
+    selection = get_next_shorts_selection() if not args.reciter or not args.surah else None
+    reciter = args.reciter or selection['reciter_key']
     
     if args.surah:
         # Generate specific verses
@@ -59,19 +56,9 @@ def cmd_generate(args):
         end = args.end or (start + args.verses - 1)
         logger.info(f"Generating specified verses: Surah {surah}, Ayat {start}-{end}")
     else:
-        # Check for Friday mode
-        from core.verse_scheduler import is_friday, get_friday_verses
-        friday_mode = os.getenv("FRIDAY_MODE_ENABLED", "true").lower() == "true"
-        
-        if friday_mode and is_friday():
-            # It's Friday! Post Al-Kahf instead
-            surah, start, end = get_friday_verses()
-            logger.info(f"🕌 FRIDAY MODE: Surah Al-Kahf, Ayat {start}-{end}")
-            print("📿 Friday Mode Activated - Surah Al-Kahf")
-        else:
-            # Get next verses from scheduler
-            surah, start, end = get_next_verses(args.verses)
-            logger.info(f"Auto-selected next verses: Surah {surah}, Ayat {start}-{end}")
+        surah, start = selection['surah'], selection['start_ayah']
+        end = min(start + args.verses - 1, VERSE_COUNTS[surah])
+        logger.info("Next rotating Short: Surah {}, Ayat {}-{}", surah, start, end)
     
     # Show what we're generating
     surah_name = get_surah_name(surah, "ar")
@@ -112,7 +99,6 @@ def cmd_generate(args):
             video_path=str(video_path)
         )
         
-        # Advance progress (only for auto-selected verses) based on ACTUAL end
         # Generation reserves no published coverage. Only a verified platform
         # receipt and atomic finalization may advance the publication journey.
         
@@ -218,27 +204,35 @@ def cmd_auto(args):
 
 def _run_auto_reel(args):
     import copy
-    import datetime
     import json
-    from config.settings import RECITERS, DEFAULT_RECITER
-    from core.verse_scheduler import get_next_verses, is_friday, get_friday_verses
-    from database.jobs import reserve_job, mark_job, read_upload_receipts, finalize_published_job, assert_transfer_retry_safe
+    from config.settings import RECITERS, VERSE_COUNTS
+    from database.jobs import reserve_job, mark_job, read_upload_receipts, finalize_published_job, assert_transfer_retry_safe, get_next_shorts_selection
+    from core.shorts_policy import require_shorts_reciter
     from notifications.publishing_policy import require_automatic_approval, PublishingPolicyError
     from youtube.uploader import upload_video, generate_metadata
     from core.utils import load_media_manifest, require_manifest_coverage
     selected=copy.copy(args)
-    sequential=not args.surah
+    rotation=True
+    if args.reciter:
+        try:
+            require_shorts_reciter(args.reciter)
+        except ValueError as error:
+            return {'status':'failed','error':str(error)}
+    selection=get_next_shorts_selection()
     if args.surah:
         surah,start,end=args.surah,args.start or 1,args.end or ((args.start or 1)+args.verses-1)
-    elif os.getenv('FRIDAY_MODE_ENABLED','true').lower()=='true' and is_friday():
-        surah,start,end=get_friday_verses()
-        sequential=False
+        if (surah,start)!=(selection['surah'],selection['start_ayah']):
+            return {'status':'failed','error':'Automatic Shorts must follow the next surah/ayah in the rotation; use generate for a specific preview'}
     else:
-        surah,start,end=get_next_verses(args.verses)
-    reciter=args.reciter or DEFAULT_RECITER
-    key=(f'journey:{surah}:{start}' if sequential else
-         f'thematic:{datetime.date.today().isoformat()}:{surah}:{start}:{end}:{reciter}')
-    job=reserve_job(key,surah=surah,start_ayah=start,end_ayah=end,reciter_key=reciter,sequential=sequential)
+        surah,start=selection['surah'],selection['start_ayah']
+        end=min(start+args.verses-1,VERSE_COUNTS[surah])
+    reciter=args.reciter or selection['reciter_key']
+    if rotation and reciter!=selection['reciter_key']:
+        return {'status':'failed','error':'Automatic Shorts must use the next reader in the rotation; omit --reciter'}
+    key=f"shorts-rotation:{surah}:{start}:{selection['cycle']}"
+    job=reserve_job(key,surah=surah,start_ayah=start,end_ayah=end,reciter_key=reciter,
+                    shorts_rotation=rotation,cycle=selection['cycle'] if rotation else None)
+    require_shorts_reciter(job['reciter_key'])
     if job.get('finalized'):
         return dict(read_upload_receipts(job['id']).get('youtube',{}),status='skipped')
     selected.surah,selected.start,selected.end=job['surah'],job['start_ayah'],job['end_ayah']
@@ -362,7 +356,9 @@ def cmd_batch(args):
 def cmd_status(args):
     """Show current progress and statistics."""
     from core.verse_scheduler import get_current_progress, get_statistics, get_reel_history
-    from database.models import init_database
+    from database.models import init_database, get_db_session, SurahShortsProgress
+    from database.jobs import get_next_shorts_selection
+    from config.settings import RECITERS, SURAH_NAMES_AR
     
     init_database()
     
@@ -373,7 +369,15 @@ def cmd_status(args):
     print("📊 QURAN REELS MAKER - STATUS")
     print("="*50)
     
-    print(f"\n📍 Current Position:")
+    selection = get_next_shorts_selection()
+    with get_db_session() as session:
+        saved_surahs = session.query(SurahShortsProgress).count()
+    print("\n📍 Next Short (surah rotation):")
+    print(f"   Surah: {SURAH_NAMES_AR[selection['surah']-1]} ({selection['surah']})")
+    print(f"   Ayat: {selection['start_ayah']}-{selection['end_ayah']}")
+    print(f"   Reciter: {RECITERS[selection['reciter_key']]['name_ar']}")
+    print(f"   Saved surah positions: {saved_surahs}")
+    print(f"\n📍 Legacy sequential position (separate from Shorts rotation):")
     print(f"   Surah: {progress['surah_name']} ({progress['surah']})")
     print(f"   Ayah: {progress['ayah']}")
     print(f"   Progress: {progress['percentage_complete']:.1f}%")
@@ -858,7 +862,7 @@ def cmd_growth_engine(args):
             slot_name=get_current_slot(future_time)
             previous_slot=get_current_slot(future_time-datetime.timedelta(hours=1))
             if slot_name and slot_name!=previous_slot:
-                format_label={'morning_short':'standard_short','evening_short':'reviewed short variation',
+                format_label={'morning_short':'standard_short','evening_short':'standard_short',
                               'friday_long':'full_surah_long','saturday_sleep':'unavailable (no validated loop builder)'}[slot_name]
                 print(f"   - {future_time.strftime('%Y-%m-%d %I:%M %p (%a)')} | Slot: {slot_name:<15} | Format: {format_label}")
                 printed += 1
@@ -913,6 +917,7 @@ def cmd_growth_engine(args):
 
 
 def main():
+    from config.settings import SHORTS_RECITERS
     parser = argparse.ArgumentParser(
         description="Quran Reels Maker - Automated Quran Short Videos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -938,7 +943,7 @@ Examples:
     gen_parser.add_argument('--start', type=int, help='Starting ayah')
     gen_parser.add_argument('--end', type=int, help='Ending ayah')
     gen_parser.add_argument('--verses', type=int, default=3, help='Number of verses per reel')
-    gen_parser.add_argument('--reciter', type=str, help='Reciter key (e.g., alafasy, sudais)')
+    gen_parser.add_argument('--reciter', choices=SHORTS_RECITERS, help='Shorts voice (default: next in rotation)')
     gen_parser.add_argument('--dry-run', action='store_true', help='Show what would be generated without doing it')
     
     # Upload command
@@ -953,7 +958,7 @@ Examples:
     # Auto command
     auto_parser = subparsers.add_parser('auto', help='Generate and upload automatically')
     auto_parser.add_argument('--verses', type=int, default=3, help='Number of verses per reel')
-    auto_parser.add_argument('--reciter', type=str, help='Reciter key')
+    auto_parser.add_argument('--reciter', choices=SHORTS_RECITERS, help='Next voice in the Shorts rotation')
     auto_parser.add_argument('--test', action='store_true', help='Generate locally; never review or upload')
     auto_parser.add_argument('--surah', type=int, help='Specific surah (optional)')
     auto_parser.add_argument('--start', type=int, help='Starting ayah (optional)')
@@ -965,7 +970,7 @@ Examples:
     batch_parser.add_argument('--count', type=int, default=3, help='Number of videos to generate (default: 3)')
     batch_parser.add_argument('--delay', type=int, default=30, help='Seconds to wait between videos (default: 30)')
     batch_parser.add_argument('--verses', type=int, default=3, help='Verses per reel')
-    batch_parser.add_argument('--reciter', type=str, help='Reciter key')
+    batch_parser.add_argument('--reciter', choices=SHORTS_RECITERS, help='Next voice in the Shorts rotation')
     batch_parser.add_argument('--test', action='store_true', help='Generate locally; never review or upload')
     batch_parser.add_argument('--surah', type=int, help='Specific surah (optional)')
     batch_parser.add_argument('--start', type=int, help='Starting ayah (optional)')

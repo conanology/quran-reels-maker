@@ -226,12 +226,16 @@ def test_three_regenerations_keep_same_verses_and_never_upload(manifest_video,mo
     import main
     from database import jobs
     from notifications import publishing_policy as policy
-    from core import verse_scheduler as scheduler
+    from core.utils import write_media_manifest
     from youtube import uploader
     video,manifest=manifest_video
-    monkeypatch.setenv('FRIDAY_MODE_ENABLED','false')
-    monkeypatch.setattr(scheduler,'get_next_verses',lambda *a:(1,1,3))
-    job=dict(id='synthetic',surah=1,start_ayah=1,end_ayah=3,reciter_key='alafasy',status='reserved')
+    manifest['reciter_key']='minshawi_mujawwad'
+    for verse in manifest['verses']:
+        verse['reciter_key']='minshawi_mujawwad'
+    write_media_manifest(video,manifest)
+    monkeypatch.setattr(jobs,'get_next_shorts_selection',lambda *a:dict(
+        surah=1,start_ayah=1,end_ayah=3,reciter_key='minshawi_mujawwad',cycle=0))
+    job=dict(id='synthetic',surah=1,start_ayah=1,end_ayah=3,reciter_key='minshawi_mujawwad',status='reserved')
     monkeypatch.setattr(jobs,'reserve_job',lambda *a,**kw:job)
     monkeypatch.setattr(jobs,'mark_job',lambda *a,**kw:None)
     monkeypatch.setattr(jobs,'read_upload_receipts',lambda *a:{})
@@ -239,16 +243,17 @@ def test_three_regenerations_keep_same_verses_and_never_upload(manifest_video,mo
     ranges=[]
     def generate(args):
         ranges.append((args.surah,args.start,args.end))
-        return dict(video_path=video,surah=1,start_ayah=1,end_ayah=3,reciter='alafasy',full_text='synthetic')
+        return dict(video_path=video,surah=1,start_ayah=1,end_ayah=3,reciter='minshawi_mujawwad',full_text='synthetic')
     monkeypatch.setattr(main,'cmd_generate',generate)
     monkeypatch.setattr(uploader,'generate_metadata',lambda **kw:META)
     review=MagicMock(side_effect=policy.PublishingPolicyError('regenerate','regenerate'))
     monkeypatch.setattr(policy,'require_automatic_approval',review)
     upload=MagicMock(side_effect=AssertionError('unapproved publication'))
     monkeypatch.setattr(uploader,'upload_video',upload)
-    args=SimpleNamespace(surah=None,start=None,end=None,verses=3,reciter='alafasy',test=False,dry_run=False)
+    args=SimpleNamespace(surah=None,start=None,end=None,verses=3,reciter=None,test=False,dry_run=False)
     result=main._run_auto_reel(args)
     assert result['status']=='failed' and ranges==[(1,1,3)]*3
+    assert review.call_count==3
     upload.assert_not_called()
 
 
