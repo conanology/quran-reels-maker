@@ -383,14 +383,21 @@ def _render_ayah_segment(
             
         zoom_filter = f",zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d=1:s=1920x1080:fps={LONGFORM_FPS}"
 
+    # FFmpeg treats a zero fade duration as its default fade, so omit the
+    # filter entirely at ordinary ayah joins.
+    fades = ""
+    if fade_in > 0:
+        fades += f",fade=t=in:st=0:d={fade_in}"
+    if fade_out > 0:
+        fades += f",fade=t=out:st={max(0, total_duration - fade_out)}:d={fade_out}"
+
     # Build filter complex
     filter_complex = (
         # Background: scale to cover 1920x1080, crop center, apply color grade and zoompan
         f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080{color_filter}{zoom_filter}[bg_raw]; "
         # Dark overlay
         f"color=black@{overlay_opacity}:s=1920x1080:d={total_duration}[dark]; "
-        f"[bg_raw][dark]overlay=0:0,fade=t=in:st=0:d={fade_in},"
-        f"fade=t=out:st={max(0, total_duration - fade_out)}:d={fade_out}[bg]; "
+        f"[bg_raw][dark]overlay=0:0{fades}[bg]; "
         # Overlay the transparent PNG text overlay (input 2)
         f"[bg][2:v]overlay=0:0[v]; "
         # Padding preserves the complete unattenuated recitation.

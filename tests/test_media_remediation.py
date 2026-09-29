@@ -393,6 +393,8 @@ def test_real_longform_segment_preserves_audio_and_quran_marks(tmp_path):
     ns["_render_ayah_segment"](str(audio_path), text, 2, "Synthetic", "Synthetic",
         str(background_path), str(second), 0.4, fade_in=0, fade_out=0, padding_after=0.2,
         background_offset=0.1)
+    with VideoFileClip(str(second)) as clip:
+        assert clip.get_frame(0.2)[10, 10].mean() > 10  # no implicit one-second FFmpeg fade
     concat = tmp_path / "concat.txt"
     concat.write_text("".join(f"file '{path.as_posix()}'\n" for path in (output, second)), encoding="utf-8")
     final = tmp_path / "joined.mp4"
