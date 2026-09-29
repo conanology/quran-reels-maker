@@ -65,6 +65,9 @@ def audit(database_path, service, expected_channel_id):
 
 def main():
     import os
+    import sys
+    if __package__ in (None, ""):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from youtube.auth import get_authenticated_service
 
     parser = argparse.ArgumentParser()
