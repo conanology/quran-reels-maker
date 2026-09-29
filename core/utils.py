@@ -35,7 +35,19 @@ def verify_media_streams(path: Path, expected_duration: float, width: int, heigh
         raise ValueError("Output must have exactly one video and one recitation audio stream")
     if (videos[0].get("width"), videos[0].get("height")) != (width, height):
         raise ValueError("Output dimensions disagree with the requested format")
-    durations = [float(s.get("duration", "nan")) for s in (videos[0], audios[0])]
+    def stream_duration(stream):
+        # Matroska stores precise stream lengths in DURATION tags rather than
+        # stream.duration; the final MP4 uses the ordinary numeric field.
+        value = stream.get("duration") or (stream.get("tags") or {}).get("DURATION", "nan")
+        try:
+            if isinstance(value, str) and ":" in value:
+                hours, minutes, seconds = value.split(":")
+                return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            return float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+
+    durations = [stream_duration(s) for s in (videos[0], audios[0])]
     if any(not math.isfinite(d) or abs(d - expected_duration) > 0.25 for d in durations):
         raise ValueError("Output stream durations do not preserve complete verse coverage")
     return {"video_duration": durations[0], "audio_duration": durations[1], "width": width, "height": height}

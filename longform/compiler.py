@@ -315,6 +315,7 @@ def _render_ayah_segment(
     color_grade: Optional[Dict] = None,
     overlay_opacity: float = 0.35,
     ken_burns: Optional[Dict] = None,
+    background_offset: float = 0.0,
 ) -> float:
     """
     Render a single ayah segment as a 16:9 video clip.
@@ -399,7 +400,7 @@ def _render_ayah_segment(
     cmd = [
         "ffmpeg", "-y",
         # Input 0: background B-roll (looped)
-        "-stream_loop", "-1", "-i", background_path,
+        "-stream_loop", "-1", "-ss", str(background_offset), "-i", background_path,
         # Input 1: ayah audio
         "-i", audio_path,
         # Input 2: transparent text overlay PNG
@@ -407,7 +408,8 @@ def _render_ayah_segment(
         "-filter_complex", filter_complex,
         "-map", "[v]", "-map", "[a]",
         *_build_encoder_args(),
-        "-c:a", "aac", "-b:a", "192k",
+        # Lossless intermediates avoid a fresh AAC encoder delay at every ayah.
+        "-c:a", "flac",
         "-pix_fmt", "yuv420p",
         "-r", str(LONGFORM_FPS),
         "-ar", "44100", "-ac", "2",
@@ -558,6 +560,12 @@ def _generate_longform(
             "outputs/longform/backgrounds/, set OPENROUTER_API_KEY, or set PEXELS_API_KEY."
         )
 
+    # Keep the background timeline moving across ayahs instead of restarting
+    # the same opening frames for every verse.
+    background_duration = _ffprobe_duration(background_path)
+    if background_duration <= 0:
+        raise RuntimeError("Background video has no measurable duration")
+
     # Extract frame from video background for thumbnail if we don't have a direct image
     if background_path and not thumbnail_bg_image_path:
         extracted_jpg = job_dir / "thumbnail_background.jpg"
@@ -647,12 +655,12 @@ def _generate_longform(
             is_surah_start = (ayah_num == start_a)
             is_surah_end = (ayah_num == end_a)
 
-            fade_in = transition_duration if (is_first_ayah or is_surah_start) else 0.15
-            fade_out = transition_duration if (is_last_ayah or is_surah_end) else 0.15
+            fade_in = transition_duration if (is_first_ayah or is_surah_start) else 0.0
+            fade_out = transition_duration if (is_last_ayah or is_surah_end) else 0.0
             seg_padding = 1.5 if is_surah_end else ayah_padding
 
             # Render segment
-            seg_output = job_dir / f"seg_{current_ayah_idx:05d}.mp4"
+            seg_output = job_dir / f"seg_{current_ayah_idx:05d}.mkv"
 
             try:
                 seg_duration = _render_ayah_segment(
@@ -670,6 +678,7 @@ def _generate_longform(
                     color_grade=style.get("color_grade"),
                     overlay_opacity=style.get("overlay_opacity", 0.35),
                     ken_burns=style.get("ken_burns"),
+                    background_offset=accumulated_time % background_duration,
                 )
 
                 processed_segments.append(str(seg_output))
@@ -772,7 +781,7 @@ def _generate_longform(
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
         "-i", str(concat_file),
-        "-c", "copy",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         str(final_output),
     ]

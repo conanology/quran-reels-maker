@@ -277,7 +277,7 @@ def test_intro_keeps_recitation_silent_until_content_and_writes_manifest(reel_en
 @pytest.fixture
 def longform_environment(tmp_path):
     (tmp_path / "output").mkdir()
-    state = {"fetch_failure": None, "render_failure": None, "duration": 1.0}
+    state = {"fetch_failure": None, "render_failure": None, "duration": 1.0, "render_calls": []}
     audio = tmp_path / "synthetic_audio.mp3"
     audio.write_bytes(b"synthetic recording")
     def fetch(**kwargs):
@@ -288,6 +288,7 @@ def longform_environment(tmp_path):
                 "timing_source": {"status": "not_available", "word_count": 0},
                 "translation": None, "recording_url": "synthetic-recording", "audio_source": "synthetic"}
     def render(**kwargs):
+        state["render_calls"].append(kwargs)
         if kwargs["ayah_num"] == state["render_failure"]:
             raise RuntimeError("synthetic render failure")
         Path(kwargs["output_path"]).write_bytes(b"synthetic segment")
@@ -313,6 +314,7 @@ def longform_environment(tmp_path):
         "generate_longform_video_metadata": lambda **kwargs: {},
     })
     ns["_render_ayah_segment"] = render
+    ns["_ffprobe_duration"] = lambda *args: 30.0
     return ns, state, tmp_path, commands
 
 
@@ -342,6 +344,20 @@ def test_partial_longform_metadata_does_not_claim_full_surah(longform_environmen
     assert "#QuranFull" not in metadata["description"]
 
 
+def test_longform_verse_join_keeps_background_and_encodes_audio_once(longform_environment):
+    ns, state, directory, commands = longform_environment
+    ns["generate_longform"](112, 112, "banna", background_path="synthetic.mp4",
+                            ayah_start=1, ayah_end=3, output_filename="job.mp4")
+    first, middle, last = state["render_calls"]
+    assert first["fade_out"] == 0
+    assert middle["fade_in"] == middle["fade_out"] == 0
+    assert last["fade_in"] == 0
+    assert [call["background_offset"] for call in state["render_calls"]] == pytest.approx([0, 1.5, 3.0])
+    assert all(call["output_path"].endswith(".mkv") for call in state["render_calls"])
+    concat = next(command for command in commands if "concat" in command)
+    assert concat[concat.index("-c:a") + 1] == "aac"
+
+
 @pytest.mark.slow
 def test_real_longform_segment_preserves_audio_and_quran_marks(tmp_path):
     import numpy as np
@@ -366,13 +382,29 @@ def test_real_longform_segment_preserves_audio_and_quran_marks(tmp_path):
         LONGFORM_WIDTH=1920, LONGFORM_HEIGHT=1080, LONGFORM_FPS=10, DETECTED_ENCODER="libx264", NVENC_PARAMS=[]))
     text = "إِنَّهُۥ هُوَ ٱلسَّمِيعُ ٱلْبَصِيرُ"
     assert ns["_clean_arabic"](text) == text
-    output = tmp_path / "segment.mp4"
+    output = tmp_path / "segment.mkv"
     duration = ns["_render_ayah_segment"](str(audio_path), text, 1, "Synthetic", "Synthetic",
         str(background_path), str(output), 0.4, fade_in=0.2, fade_out=0.2, padding_after=0.2)
     assert duration == pytest.approx(0.6)
     with VideoFileClip(str(output)) as clip:
         samples = clip.audio.get_frame(np.arange(0.30, 0.38, 1 / 44100))
         assert np.sqrt(np.mean(samples ** 2)) > 0.12
+    second = tmp_path / "second.mkv"
+    ns["_render_ayah_segment"](str(audio_path), text, 2, "Synthetic", "Synthetic",
+        str(background_path), str(second), 0.4, fade_in=0, fade_out=0, padding_after=0.2,
+        background_offset=0.1)
+    concat = tmp_path / "concat.txt"
+    concat.write_text("".join(f"file '{path.as_posix()}'\n" for path in (output, second)), encoding="utf-8")
+    final = tmp_path / "joined.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                    "-i", str(concat), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    str(final)], check=True, capture_output=True, text=True, timeout=60)
+    assert utility["verify_media_streams"](final, 1.2, 1920, 1080)["audio_duration"] == pytest.approx(1.2, abs=0.15)
+    with VideoFileClip(str(final)) as clip:
+        samples = clip.audio.get_frame(np.arange(0.70, 0.78, 1 / 44100))
+        assert np.sqrt(np.mean(samples ** 2)) > 0.12
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(final), "-f", "null", "-"],
+                   check=True, capture_output=True, text=True, timeout=60)
     assert not list(tmp_path.glob("_overlay_*.png"))
 
 

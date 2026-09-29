@@ -128,7 +128,7 @@ else:
 AMBIENT_DIR = ASSETS_DIR / "ambient"
 
 # Environment config
-AMBIENT_ENABLED = os.getenv("AMBIENT_SOUND_ENABLED", "true").lower() == "true"
+AMBIENT_ENABLED = os.getenv("AMBIENT_SOUND_ENABLED", "false").lower() == "true"
 AMBIENT_VOLUME = float(os.getenv("AMBIENT_VOLUME", "0.12"))  # 12% volume by default
 AUDIO_NORMALIZE = os.getenv("AUDIO_NORMALIZE", "true").lower() == "true"
 

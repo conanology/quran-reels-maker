@@ -776,11 +776,9 @@ def cmd_auto_longform(args):
                         surah_end=job['surah_end'] or job['surah'],end_ayah=job['end_ayah'],reciter_key=job['reciter_key'])
                 else:
                     assert_transfer_retry_safe(job['id'],'youtube')
-                    video_path=Path(OUTPUTS_DIR)/'jobs'/job['id']/'longform.mp4'
-                    video_path.parent.mkdir(parents=True,exist_ok=True)
                     generated=generate_longform(surah_start=group['surah_start'],surah_end=group['surah_end'],
                         reciter_key=job['reciter_key'],ayah_start=group.get('ayah_start'),ayah_end=group.get('ayah_end'),
-                        output_filename=str(video_path))
+                        output_filename=f"longform_{job['id']}.mp4")
                     video_path=Path(generated['output_path'])
                     manifest=load_media_manifest(video_path)
                     require_manifest_coverage(manifest,surah_start=job['surah'],start_ayah=job['start_ayah'],

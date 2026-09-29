@@ -318,14 +318,21 @@ def test_main_longform_wrong_manifest_stops_before_review_and_transfer(state,ver
     models,_,database=state
     monkeypatch.setattr(settings,'DATABASE_PATH',database)
     monkeypatch.setattr(scheduler,'get_next_compilation',lambda:dict(surah_start=1,surah_end=1,ayah_start=1,ayah_end=7))
-    monkeypatch.setattr(compiler,'generate_longform',lambda **kw:dict(output_path=str(verified_fixture_video),
-        recommended_title='Synthetic full range',description='Synthetic',tags=[],thumbnail_path=None))
+    generation_args=[]
+    def generate(**kw):
+        generation_args.append(kw)
+        return dict(output_path=str(verified_fixture_video),recommended_title='Synthetic full range',
+                    description='Synthetic',tags=[],thumbnail_path=None)
+    monkeypatch.setattr(compiler,'generate_longform',generate)
     reviewer=MagicMock(side_effect=AssertionError('Wrong coverage reached review'))
     transfer=MagicMock(side_effect=AssertionError('Wrong coverage reached remote transfer'))
     monkeypatch.setattr(publishing_policy,'require_automatic_approval',reviewer)
     monkeypatch.setattr(uploader,'upload_video',transfer)
     result=main.cmd_auto_longform(SimpleNamespace(test=False,reciter='minshawi_mujawwad'))
     assert result['status']=='failed'
+    assert len(generation_args)==1
+    assert generation_args[0]['output_filename'].startswith('longform_')
+    assert Path(generation_args[0]['output_filename']).name==generation_args[0]['output_filename']
     reviewer.assert_not_called();transfer.assert_not_called()
     with models.get_db_session() as session:
         assert session.query(models.LongformHistory).count()==0
