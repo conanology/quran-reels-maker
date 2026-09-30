@@ -161,6 +161,58 @@ def get_audio_duration_moviepy(audio_path: Path) -> float:
         raise VideoGeneratorError(f"Could not measure ayah audio: {audio_path.name}") from e
 
 
+def _prepare_reel_ayah(data, current_time, ayah_padding):
+    """Place source audio tightly on the reel timeline without editing the recording.
+
+    Word timings identify the recited span for mapped readers. For readers without
+    timings, only measured silence at the recording boundaries may be removed.
+    Internal pauses remain intact, and source hashes still identify original audio.
+    """
+    from dataclasses import replace
+    from pydub import AudioSegment
+    from pydub.silence import detect_nonsilent
+
+    duration = data["audio_duration"]
+    sound = AudioSegment.from_file(str(data["audio_path"]))
+    if abs(len(sound) / 1000 - duration) > 0.25:
+        raise VideoGeneratorError(f"Complete ayah {data['ayah']} has inconsistent recording duration")
+    # A very quiet legacy recording must remain audible, not be mistaken
+    # for an all-silent verse by a fixed threshold.
+    threshold = min(-45, sound.dBFS - 18)
+    spans = detect_nonsilent(sound, min_silence_len=200, silence_thresh=threshold)
+    if not spans:
+        raise VideoGeneratorError(f"Ayah {data['ayah']} recording contains no detectable recitation")
+    first, last = spans[0][0] / 1000, spans[-1][1] / 1000
+    timing = data.get("word_timing")
+    if timing is not None:
+        # Timings can omit audible pre-word material (notably on first verses).
+        # Keep that material even when the first timed word begins later.
+        trim_start = min(max(0.0, timing.starts_ms[0] / 1000 - 0.10),
+                         max(0.0, first - 0.10))
+        trim_end = min(duration, timing.ends_ms[-1] / 1000 + 0.20)
+    else:
+        trim_start = max(0.0, first - 0.10) if first >= 0.30 else 0.0
+        trim_end = min(duration, last + 0.20) if duration - last >= 0.30 else duration
+
+    if trim_end <= trim_start or trim_end - trim_start < 0.25:
+        raise VideoGeneratorError(f"Ayah {data['ayah']} has invalid audible duration")
+    if timing is not None:
+        offset_ms = round(trim_start * 1000)
+        adjusted = replace(
+            timing,
+            starts_ms=[value - offset_ms for value in timing.starts_ms],
+            ends_ms=[value - offset_ms for value in timing.ends_ms],
+        )
+        adjusted.validate_for_audio(trim_end - trim_start)
+        data["render_word_timing"] = adjusted
+    data["audio_trim_start"] = trim_start
+    data["audio_trim_end"] = trim_end
+    data["start_time"] = current_time
+    data["end_time"] = current_time + trim_end - trim_start
+    data["segment_end"] = data["end_time"] + ayah_padding
+    return data
+
+
 def _build_karaoke_clips(timing, display_duration, style, output_dir, prefix):
     """
     One lazy clip holding each highlighted word until the next word begins.
@@ -270,6 +322,7 @@ def _generate_reel(
             surah, current_ayah, reciter_key, audio_dir,
             get_audio_duration_moviepy, current_time, style.ayah_padding,
         )
+        data = _prepare_reel_ayah(data, current_time, style.ayah_padding)
         projected_duration = data["segment_end"] + 0.5
         # Stop adding ayahs if this one would push us over the max
         if not ayah_data and projected_duration > max_content_duration:
@@ -302,6 +355,7 @@ def _generate_reel(
             surah, current_ayah, reciter_key, audio_dir,
             get_audio_duration_moviepy, current_time, style.ayah_padding,
         )
+        data = _prepare_reel_ayah(data, current_time, style.ayah_padding)
         projected_duration = data["segment_end"] + 0.5
         # Don't add this ayah if it would exceed max duration
         if projected_duration > max_content_duration:
@@ -376,7 +430,7 @@ def _generate_reel(
 
         # Arabic text: highlight each word as it is recited when real per-word
         # timings exist, otherwise show the whole ayah for its duration.
-        timing = data["word_timing"]
+        timing = data.get("render_word_timing", data["word_timing"])
 
         karaoke_clips = []
         if timing:
@@ -426,13 +480,7 @@ def _generate_reel(
     for i, data in enumerate(ayah_data):
         audio_clip = AudioFileClip(str(data["audio_path"]))
         resources.append(audio_clip)
-        max_duration = data["audio_duration"]
-        if audio_clip.duration > max_duration:
-            logger.warning(
-                f"Ayah {data['ayah']}: Trimming audio from "
-                f"{audio_clip.duration:.2f}s to {max_duration:.2f}s"
-            )
-            audio_clip = audio_clip.subclip(0, max_duration)
+        audio_clip = audio_clip.subclip(data["audio_trim_start"], data["audio_trim_end"])
 
         audio_clip = audio_clip.set_start(data["start_time"])
 
@@ -515,7 +563,10 @@ def _generate_reel(
                         "text": item["text"], "recording_url": item["recording_url"],
                         "source": item["audio_source"], "audio_sha256": file_sha256(item["audio_path"]),
                         "text_source": item["text_source"], "timing_source": item["timing_source"],
-                        "audio_duration": item["audio_duration"]} for item in ayah_data],
+                        "audio_duration": item["audio_duration"],
+                        "audio_edit": {"source_start_seconds": item["audio_trim_start"],
+                                       "source_end_seconds": item["audio_trim_end"]}}
+                       for item in ayah_data],
             "loop_count": 1, "intro_duration": INTRO_DURATION if ENABLE_INTRO_FRAME else 0,
             "duration_seconds": total_duration, "streams": streams,
             "background": get_asset_provenance(background_path), "domain_review_required": True,

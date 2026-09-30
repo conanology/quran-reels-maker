@@ -169,7 +169,7 @@ MAX_REEL_DURATION_SECONDS = _env_int("MAX_REEL_DURATION_SECONDS", 59, 1, 180)  #
 MIN_REEL_DURATION_SECONDS = 30  # Minimum duration for engagement
 
 # Video effect settings (extracted from video_generator.py)
-AYAH_PADDING_SECONDS = 0.48      # Pause between ayahs
+AYAH_PADDING_SECONDS = 0.0       # Source recordings already contain natural recitation pauses
 BACKGROUND_BRIGHTNESS = 0.55     # Darken background (0.0-1.0)
 TEXT_FADE_IN_SECONDS = 0.4       # Text fade-in duration
 TEXT_FADE_OUT_SECONDS = 0.4      # Text fade-out duration

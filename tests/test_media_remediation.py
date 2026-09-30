@@ -253,6 +253,38 @@ def test_overlong_first_verse_stops_without_partial_output(reel_environment):
     assert not list(directory.glob("reel_*"))
 
 
+def test_reel_boundary_trim_keeps_words_and_closes_source_gap(tmp_path):
+    from pydub import AudioSegment
+    from pydub.generators import Sine
+
+    ns = definitions("core/video_generator.py", names={"_prepare_reel_ayah"})
+    timings = definitions("core/word_timings.py", {"RECITER_MAPPING_V4": {}})
+    WordTiming = timings["WordTiming"]
+    prepare = ns["_prepare_reel_ayah"]
+    verse_two_audio = tmp_path / "source2.wav"
+    verse_three_audio = tmp_path / "source3.wav"
+    Sine(440).to_audio_segment(duration=12380).apply_gain(-20).export(verse_two_audio, format="wav")
+    (AudioSegment.silent(duration=1650) +
+     Sine(440).to_audio_segment(duration=5430).apply_gain(-20)).export(verse_three_audio, format="wav")
+    verse_two = {"ayah": 2, "audio_path": verse_two_audio, "audio_duration": 12.38,
+                 "word_timing": WordTiming(["مَا", "كَسَبَ"], [120, 9400], [700, 10430], "source2.mp3")}
+    verse_three = {"ayah": 3, "audio_path": verse_three_audio, "audio_duration": 7.08,
+                   "word_timing": WordTiming(["سَيَصْلَى", "لَهَبٍ"], [1650, 5600], [2200, 6620], "source3.mp3")}
+    prepare(verse_two, 0.1, 0)
+    prepare(verse_three, verse_two["segment_end"], 0)
+    assert verse_two["audio_trim_end"] == pytest.approx(10.63)
+    assert verse_three["audio_trim_start"] == pytest.approx(1.55)
+    assert verse_three["render_word_timing"].starts_ms[0] == 100
+    assert verse_three["render_word_timing"].ends_ms[-1] == 5070
+    assert verse_three["start_time"] == verse_two["end_time"]
+    assert verse_two["audio_duration"] == 12.38  # Manifest still identifies the source recording.
+    early_audio = {"ayah": 4, "audio_path": verse_two_audio, "audio_duration": 12.38,
+                   "word_timing": WordTiming(["وَٱمْرَأَتُهُ", "ٱلْحَطَبِ"],
+                                             [660, 10800], [1400, 12020], "source4.mp3")}
+    prepare(early_audio, 0, 0)
+    assert early_audio["audio_trim_start"] == 0  # Audible intro predates first timed word.
+
+
 def test_intro_keeps_recitation_silent_until_content_and_writes_manifest(reel_environment, monkeypatch):
     from moviepy.editor import VideoFileClip
     import numpy as np
